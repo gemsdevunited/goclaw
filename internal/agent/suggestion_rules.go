@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
@@ -82,5 +84,71 @@ func (r *RepeatedToolRule) Evaluate(_ context.Context, _ uuid.UUID, input Analys
 			}, nil
 		}
 	}
+	return nil, nil
+}
+
+// FeedbackPerformanceRule suggests updating system instructions when negative user feedback is high.
+// Triggers: negative feedback ratio > 25% over 10+ ratings.
+type FeedbackPerformanceRule struct{}
+
+func (r *FeedbackPerformanceRule) Name() string { return "feedback_performance" }
+
+func (r *FeedbackPerformanceRule) Evaluate(_ context.Context, _ uuid.UUID, input AnalysisInput) (*store.EvolutionSuggestion, error) {
+	var totalCount, badCount int
+	tagCounts := make(map[string]int)
+	var sampleComments []string
+
+	for _, metric := range input.FeedbackMetrics {
+		var payload struct {
+			Rating  string   `json:"rating"`
+			Tags    []string `json:"tags"`
+			Comment string   `json:"comment"`
+		}
+		if err := json.Unmarshal(metric.Value, &payload); err == nil {
+			totalCount++
+			if payload.Rating == "bad" {
+				badCount++
+				for _, t := range payload.Tags {
+					tagCounts[t]++
+				}
+				if payload.Comment != "" {
+					sampleComments = append(sampleComments, payload.Comment)
+				}
+			}
+		}
+	}
+
+	if totalCount < 10 {
+		return nil, nil
+	}
+
+	negativeRatio := float64(badCount) / float64(totalCount)
+	if negativeRatio > 0.25 {
+		topReason := "general"
+		maxVal := 0
+		for tag, cnt := range tagCounts {
+			if cnt > maxVal {
+				maxVal = cnt
+				topReason = tag
+			}
+		}
+
+		// Join comments into a readable summary string
+		commentsSummary := strings.Join(sampleComments, "; ")
+		if len(commentsSummary) > 200 {
+			commentsSummary = commentsSummary[:197] + "..."
+		}
+		if commentsSummary == "" {
+			commentsSummary = "None provided"
+		}
+
+		return &store.EvolutionSuggestion{
+			SuggestionType: store.SuggestInstructionUpdate,
+			Suggestion:     fmt.Sprintf("Refine system instruction — user satisfaction is low (%.0f%% negative feedback)", negativeRatio*100),
+			Rationale:      fmt.Sprintf("Out of %d responses rated, %d were negative. Top reported issue: %q. Recent comments: %s", totalCount, badCount, topReason, commentsSummary),
+			Parameters:     marshalParams(map[string]any{"reason": topReason, "negative_ratio": negativeRatio}),
+		}, nil
+	}
+
 	return nil, nil
 }

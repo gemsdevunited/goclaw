@@ -130,3 +130,88 @@ func TestRepeatedToolRule_IncludesSkillDraft(t *testing.T) {
 		t.Error("skill_draft missing tool name")
 	}
 }
+
+func TestFeedbackPerformanceRule(t *testing.T) {
+	rule := &FeedbackPerformanceRule{}
+	
+	makeMetric := func(rating string, comment string, tags []string) store.EvolutionMetric {
+		val, _ := json.Marshal(map[string]any{
+			"rating":  rating,
+			"tags":    tags,
+			"comment": comment,
+		})
+		return store.EvolutionMetric{
+			Value: val,
+		}
+	}
+
+	tests := []struct {
+		name    string
+		metrics []store.EvolutionMetric
+		wantNil bool
+	}{
+		{
+			name: "insufficient data (< 10 ratings) -> skip",
+			metrics: []store.EvolutionMetric{
+				makeMetric("bad", "hallucination", []string{"incorrect_information"}),
+				makeMetric("bad", "wrong info", []string{"incorrect_information"}),
+			},
+			wantNil: true,
+		},
+		{
+			name: "mostly good feedback -> skip",
+			metrics: []store.EvolutionMetric{
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("bad", "wrong", []string{"incorrect_information"}),
+				makeMetric("bad", "slow", []string{"bad_formatting"}),
+			}, // 2/10 = 20% negative (< 25%)
+			wantNil: true,
+		},
+		{
+			name: "high negative feedback -> trigger suggestion",
+			metrics: []store.EvolutionMetric{
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("good", "", nil),
+				makeMetric("bad", "wrong fact", []string{"incorrect_information"}),
+				makeMetric("bad", "outdated url", []string{"outdated_instructions"}),
+				makeMetric("bad", "hallucination", []string{"incorrect_information"}),
+				makeMetric("bad", "bad link", []string{"outdated_instructions"}),
+			}, // 4/10 = 40% negative (> 25%)
+			wantNil: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sg, err := rule.Evaluate(context.Background(), uuid.New(), AnalysisInput{FeedbackMetrics: tt.metrics})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantNil && sg != nil {
+				t.Errorf("expected nil, got %+v", sg)
+			}
+			if !tt.wantNil && sg == nil {
+				t.Error("expected suggestion, got nil")
+			}
+			if !tt.wantNil && sg != nil {
+				if sg.SuggestionType != store.SuggestInstructionUpdate {
+					t.Errorf("expected SuggestInstructionUpdate, got %q", sg.SuggestionType)
+				}
+				if !strings.Contains(sg.Rationale, "incorrect_information") && !strings.Contains(sg.Rationale, "outdated_instructions") {
+					t.Errorf("expected rationale to mention top issue tags, got %q", sg.Rationale)
+				}
+			}
+		})
+	}
+}

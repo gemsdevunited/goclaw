@@ -18,13 +18,30 @@ export interface RetrievalAggregate {
 export interface EvolutionSuggestion {
   id: string;
   agent_id: string;
-  suggestion_type: "threshold" | "tool_order" | "skill_add";
+  suggestion_type: "threshold" | "tool_order" | "skill_add" | "instruction_update";
   suggestion: string;
   rationale: string;
   parameters: Record<string, unknown> | null;
   status: "pending" | "approved" | "rejected" | "applied" | "rolled_back";
   reviewed_by: string | null;
   reviewed_at: string | null;
+  created_at: string;
+}
+
+export interface FeedbackValue {
+  rating: "good" | "bad";
+  tags: string[];
+  comment?: string;
+}
+
+export interface EvolutionMetric<T = any> {
+  id: string;
+  tenant_id: string;
+  agent_id: string;
+  session_key: string;
+  metric_type: string;
+  metric_key: string;
+  value: T;
   created_at: string;
 }
 

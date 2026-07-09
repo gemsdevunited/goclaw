@@ -137,6 +137,14 @@ func (s *PGEvolutionMetricsStore) Cleanup(ctx context.Context, olderThan time.Ti
 	return result.RowsAffected()
 }
 
+func (s *PGEvolutionMetricsStore) DeleteFeedbackMetric(ctx context.Context, agentID uuid.UUID, messageID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM agent_evolution_metrics
+		 WHERE agent_id = $1 AND metric_type = 'feedback' AND metric_key = $2`,
+		agentID, messageID)
+	return err
+}
+
 // RecordToolMetric is a convenience helper for recording tool execution metrics.
 func RecordToolMetric(ctx context.Context, s store.EvolutionMetricsStore, agentID uuid.UUID, sessionKey, toolName string, success bool, durationMs int64) {
 	value, _ := json.Marshal(map[string]any{

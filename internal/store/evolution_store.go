@@ -14,6 +14,7 @@ type MetricType string
 const (
 	MetricRetrieval MetricType = "retrieval"
 	MetricTool      MetricType = "tool"
+	MetricFeedback  MetricType = "feedback"
 )
 
 // EvolutionMetric is a single recorded metric data point.
@@ -50,6 +51,7 @@ type EvolutionMetricsStore interface {
 	QueryMetrics(ctx context.Context, agentID uuid.UUID, metricType MetricType, since time.Time, limit int) ([]EvolutionMetric, error)
 	AggregateToolMetrics(ctx context.Context, agentID uuid.UUID, since time.Time) ([]ToolAggregate, error)
 	AggregateRetrievalMetrics(ctx context.Context, agentID uuid.UUID, since time.Time) ([]RetrievalAggregate, error)
+	DeleteFeedbackMetric(ctx context.Context, agentID uuid.UUID, messageID string) error
 	Cleanup(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
@@ -57,9 +59,10 @@ type EvolutionMetricsStore interface {
 type SuggestionType string
 
 const (
-	SuggestThreshold SuggestionType = "threshold"
-	SuggestToolOrder SuggestionType = "tool_order"
-	SuggestSkillAdd  SuggestionType = "skill_add"
+	SuggestThreshold         SuggestionType = "threshold"
+	SuggestToolOrder         SuggestionType = "tool_order"
+	SuggestSkillAdd          SuggestionType = "skill_add"
+	SuggestInstructionUpdate SuggestionType = "instruction_update"
 )
 
 // EvolutionSuggestion is a data-driven suggestion for agent improvement.

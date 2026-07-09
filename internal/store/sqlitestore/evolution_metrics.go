@@ -147,5 +147,13 @@ func (s *SQLiteEvolutionMetricsStore) Cleanup(ctx context.Context, olderThan tim
 	return result.RowsAffected()
 }
 
+func (s *SQLiteEvolutionMetricsStore) DeleteFeedbackMetric(ctx context.Context, agentID uuid.UUID, messageID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM agent_evolution_metrics
+		 WHERE agent_id = ? AND metric_type = 'feedback' AND metric_key = ?`,
+		agentID.String(), messageID)
+	return err
+}
+
 // Ensure SQLiteEvolutionMetricsStore implements store.EvolutionMetricsStore.
 var _ store.EvolutionMetricsStore = (*SQLiteEvolutionMetricsStore)(nil)

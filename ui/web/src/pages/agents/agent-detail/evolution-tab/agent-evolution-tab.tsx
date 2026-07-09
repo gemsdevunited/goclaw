@@ -4,8 +4,10 @@ import { Sparkles } from "lucide-react";
 import { useV3Flags } from "@/hooks/use-v3-flags";
 import { useEvolutionMetrics } from "@/hooks/use-evolution-metrics";
 import { useEvolutionSuggestions } from "@/hooks/use-evolution-suggestions";
+import { useEvolutionFeedback } from "@/hooks/use-evolution-feedback";
 import { EvolutionMetricsCharts } from "./evolution-metrics-charts";
 import { EvolutionSuggestionsTable } from "./evolution-suggestions-table";
+import { EvolutionFeedbackTable } from "./evolution-feedback-table";
 import { EvolutionGuardrailsCard } from "./evolution-guardrails-card";
 import type { AdaptationGuardrails } from "@/types/evolution";
 
@@ -31,6 +33,7 @@ export function AgentEvolutionTab({ agentId, agentOtherConfig }: AgentEvolutionT
   const { flags, loading: flagsLoading } = useV3Flags(agentId);
   const { toolAggs, retrievalAggs, loading: metricsLoading } = useEvolutionMetrics(agentId, timeRange);
   const { suggestions, loading: suggestionsLoading, updateStatus } = useEvolutionSuggestions(agentId);
+  const { feedback, loading: feedbackLoading } = useEvolutionFeedback(agentId, timeRange);
 
   // Parse guardrails from agent other_config, fallback to defaults.
   const guardrails: AdaptationGuardrails = {
@@ -87,6 +90,15 @@ export function AgentEvolutionTab({ agentId, agentOtherConfig }: AgentEvolutionT
           suggestions={suggestions}
           loading={suggestionsLoading}
           onUpdateStatus={updateStatus}
+        />
+      </div>
+
+      {/* Feedback table */}
+      <div className="space-y-2">
+        <h4 className="text-sm font-medium">{t("detail.evolution.feedback") || "User Feedback"}</h4>
+        <EvolutionFeedbackTable
+          feedback={feedback}
+          loading={feedbackLoading}
         />
       </div>
 

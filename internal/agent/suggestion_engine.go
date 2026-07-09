@@ -12,9 +12,10 @@ import (
 
 // AnalysisInput bundles aggregated metrics for rule evaluation.
 type AnalysisInput struct {
-	ToolAggs      []store.ToolAggregate
-	RetrievalAggs []store.RetrievalAggregate
-	Since         time.Time
+	ToolAggs        []store.ToolAggregate
+	RetrievalAggs   []store.RetrievalAggregate
+	FeedbackMetrics []store.EvolutionMetric
+	Since           time.Time
 }
 
 // AnalysisRule evaluates aggregated metrics and optionally returns a suggestion.
@@ -33,6 +34,7 @@ type SuggestionEngine struct {
 }
 
 // NewSuggestionEngine creates a suggestion engine with default rules.
+// Added FeedbackPerformanceRule.
 func NewSuggestionEngine(metrics store.EvolutionMetricsStore, suggestions store.EvolutionSuggestionStore) *SuggestionEngine {
 	return &SuggestionEngine{
 		metrics:     metrics,
@@ -41,6 +43,7 @@ func NewSuggestionEngine(metrics store.EvolutionMetricsStore, suggestions store.
 			&LowRetrievalUsageRule{},
 			&ToolFailureRule{},
 			&RepeatedToolRule{},
+			&FeedbackPerformanceRule{},
 		},
 	}
 }
@@ -64,6 +67,9 @@ func extractMetricKey(params json.RawMessage, st store.SuggestionType) string {
 	case store.SuggestToolOrder, store.SuggestSkillAdd:
 		s, _ := p["tool"].(string)
 		return s
+	case store.SuggestInstructionUpdate:
+		s, _ := p["reason"].(string)
+		return s
 	default:
 		return ""
 	}
@@ -83,10 +89,16 @@ func (e *SuggestionEngine) Analyze(ctx context.Context, agentID uuid.UUID) ([]st
 		return nil, err
 	}
 
+	feedbackMetrics, err := e.metrics.QueryMetrics(ctx, agentID, store.MetricFeedback, since, 500)
+	if err != nil {
+		slog.Warn("evolution.feedback_query_failed", "agentID", agentID, "error", err)
+	}
+
 	input := AnalysisInput{
-		ToolAggs:      toolAggs,
-		RetrievalAggs: retrievalAggs,
-		Since:         since,
+		ToolAggs:        toolAggs,
+		RetrievalAggs:   retrievalAggs,
+		FeedbackMetrics: feedbackMetrics,
+		Since:           since,
 	}
 
 	// Load existing pending suggestions to avoid duplicates (composite key: type + metric key).

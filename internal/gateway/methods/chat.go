@@ -3,6 +3,7 @@ package methods
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -41,6 +42,7 @@ type ChatMethods struct {
 	teamStore        store.TeamStore
 	linkStore        store.AgentLinkStore
 	teamWorkEmbedder memory.EmbeddingProvider
+	metricsStore     store.EvolutionMetricsStore
 }
 
 func NewChatMethods(agents *agent.Router, sess store.SessionStore, cfg *config.Config, rl *gateway.RateLimiter, eventBus bus.EventPublisher) *ChatMethods {
@@ -70,6 +72,10 @@ func (m *ChatMethods) SetPostTurnProcessor(pt tools.PostTurnProcessor) {
 	m.postTurn = pt
 }
 
+func (m *ChatMethods) SetEvolutionMetricsStore(s store.EvolutionMetricsStore) {
+	m.metricsStore = s
+}
+
 // Register adds chat methods to the router.
 func (m *ChatMethods) Register(router *gateway.MethodRouter) {
 	router.Register(protocol.MethodChatSend, m.handleSend)
@@ -77,6 +83,7 @@ func (m *ChatMethods) Register(router *gateway.MethodRouter) {
 	router.Register(protocol.MethodChatAbort, m.handleAbort)
 	router.Register(protocol.MethodChatInject, m.handleInject)
 	router.Register(protocol.MethodChatSessionStatus, m.handleSessionStatus)
+	router.Register(protocol.MethodChatFeedback, m.handleFeedback)
 }
 
 // handleSessionStatus returns the running state and activity for a session.
@@ -675,4 +682,80 @@ func (m *ChatMethods) handleAbort(ctx context.Context, client *gateway.Client, r
 		"unauthorized":    respUnauthorized > 0,
 		"runIds":          runIDs,
 	}))
+}
+
+func (m *ChatMethods) handleFeedback(ctx context.Context, client *gateway.Client, req *protocol.RequestFrame) {
+	locale := store.LocaleFromContext(ctx)
+	if m.metricsStore == nil {
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, i18n.T(locale, i18n.MsgInternalError)))
+		return
+	}
+
+	var params struct {
+		SessionKey string   `json:"sessionKey"`
+		MessageID  string   `json:"messageId"`
+		Rating     string   `json:"rating"`
+		Tags       []string `json:"tags"`
+		Comment    string   `json:"comment"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgInvalidJSON)))
+		return
+	}
+
+	if params.SessionKey == "" || params.MessageID == "" || params.Rating == "" {
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, "sessionKey, messageId, and rating are required"))
+		return
+	}
+
+	// 1. Session ownership check
+	if !requireSessionOwner(ctx, m.sessions, m.cfg, client, req.ID, params.SessionKey) {
+		return
+	}
+
+	// 2. Retrieve session to get agent_id
+	session := m.sessions.Get(ctx, params.SessionKey)
+	if session == nil {
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrNotFound, "session not found"))
+		return
+	}
+
+	tenantID := store.TenantIDFromContext(ctx)
+
+	// 3. Delete any existing feedback metric for this message to prevent duplicates
+	if err := m.metricsStore.DeleteFeedbackMetric(ctx, session.AgentUUID, params.MessageID); err != nil {
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, err.Error()))
+		return
+	}
+
+	// 4. Construct payload value
+	val, err := json.Marshal(map[string]any{
+		"rating":  params.Rating,
+		"tags":    params.Tags,
+		"comment": params.Comment,
+	})
+	if err != nil {
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, err.Error()))
+		return
+	}
+
+	// 5. Record the metric
+	metric := store.EvolutionMetric{
+		ID:         uuid.New(),
+		TenantID:   tenantID,
+		AgentID:    session.AgentUUID,
+		SessionKey: params.SessionKey,
+		MetricType: store.MetricFeedback,
+		MetricKey:  params.MessageID,
+		Value:      val,
+		CreatedAt:  time.Now(),
+	}
+
+	if err := m.metricsStore.RecordMetric(ctx, metric); err != nil {
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, err.Error()))
+		return
+	}
+
+	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{"ok": true}))
 }
