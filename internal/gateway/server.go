@@ -362,8 +362,8 @@ func tokenAuthMiddleware(token string, next http.Handler) http.Handler {
 func (s *Server) Start(ctx context.Context) error {
 	mux := s.BuildMux()
 
-	// Wrap with CORS for desktop dev mode (Wails serves frontend on different port).
-	var handler http.Handler = mux
+	// Wrap with CORS.
+	var handler http.Handler = s.corsMiddleware(mux)
 	if os.Getenv("GOCLAW_DESKTOP") == "1" {
 		handler = desktopCORS(mux)
 	}
@@ -836,13 +836,47 @@ func StartTestServer(s *Server, ctx context.Context) (addr string, start func())
 	return addr, start
 }
 
+// corsMiddleware wraps a handler with CORS headers based on allowed origins configuration.
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			allowed := false
+			if len(s.cfg.Gateway.AllowedOrigins) == 0 {
+				allowed = true
+			} else {
+				for _, o := range s.cfg.Gateway.AllowedOrigins {
+					if o == "*" || o == origin {
+						allowed = true
+						break
+					}
+				}
+			}
+
+			if allowed {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-GoClaw-Tenant-Id, X-GoClaw-User-Id, X-GoClaw-Sender-Id")
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Add("Vary", "Origin")
+			}
+		}
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // desktopCORS wraps a handler with permissive CORS headers for desktop dev mode.
 // Only active when GOCLAW_DESKTOP=1 (set by desktop app.go).
 func desktopCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-GoClaw-Tenant-Id, X-GoClaw-User-Id")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-GoClaw-Tenant-Id, X-GoClaw-User-Id, X-GoClaw-Sender-Id")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
