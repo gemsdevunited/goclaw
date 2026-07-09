@@ -1,0 +1,39 @@
+# MCP Hub sidecar overlay — adds Gemster MCP server for browser automation and data tools.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.mcp.yml up -d --build
+#   # Or combined with postgres + browser:
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.browser.yml -f docker-compose.mcp.yml up -d --build
+#
+# GoClaw Admin UI registration:
+#   - Transport: SSE
+#   - Endpoint (browser tool):  http://gemster-mcp:18920/mcp/browser
+#   - Endpoint (data tool):     http://gemster-mcp:18920/mcp/data
+
+services:
+  gemster-mcp:
+    build:
+      context: ${GEMSTER_MCP_DIR:-../gemster-mcp}
+      dockerfile: Dockerfile
+    ports:
+      - "${GEMSTER_MCP_PORT:-18920}:18920"
+    env_file:
+      - ${GEMSTER_MCP_DIR:-../gemster-mcp}/.env
+    environment:
+      - DOCKER_MODE=true
+      - PORT=18920
+    volumes:
+      - ${GEMSTER_MCP_DIR:-../gemster-mcp}/data:/app/data
+    networks:
+      - default
+      - goclaw-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/18920"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  goclaw-net:
+    external: true
