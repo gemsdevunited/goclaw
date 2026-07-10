@@ -184,8 +184,9 @@ func (t *ReadImageTool) callProvider(ctx context.Context, cp credentialProvider,
 	slog.Info("read_image: calling vision provider", "provider", providerName, "model", model, "images", len(images))
 
 	opts := map[string]any{
-		"max_tokens":  1024,
-		"temperature": 0.3,
+		"max_tokens":               4096,
+		"temperature":              0.3,
+		providers.OptThinkingLevel: "low",
 	}
 	// claude-cli spawns the Claude CLI binary; loading its built-in MCP
 	// toolset costs latency we don't need for a one-shot vision call. Keep

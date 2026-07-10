@@ -147,7 +147,9 @@ func (l *Loop) makeBuildMessages(req *RunRequest) func(ctx context.Context, inpu
 			input.ChatTitle, input.ChatID, input.PeerKind, input.UserID, input.SenderName,
 			input.HistoryLimit, input.SkillFilter, input.LightContext, input.TelegramManagerPermissions)
 		if input.TurnContext != nil && len(msgs) > 0 {
-			msgs[len(msgs)-1].Content = renderTurnContext(msgs[len(msgs)-1].Content, input.TurnContext)
+			orig := msgs[len(msgs)-1].Content
+			msgs[len(msgs)-1].Content = renderTurnContext(orig, input.TurnContext)
+			msgs[len(msgs)-1].PersistedContent = &orig
 		}
 		return msgs, nil
 	}
