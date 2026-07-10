@@ -150,6 +150,7 @@ func (l *Loop) makeBuildMessages(req *RunRequest) func(ctx context.Context, inpu
 			orig := msgs[len(msgs)-1].Content
 			msgs[len(msgs)-1].Content = renderTurnContext(orig, input.TurnContext)
 			msgs[len(msgs)-1].PersistedContent = &orig
+			msgs[len(msgs)-1].Context = input.TurnContext
 		}
 		return msgs, nil
 	}
@@ -684,6 +685,7 @@ func (l *Loop) makeFlushMessages(req *RunRequest) func(ctx context.Context, sess
 			l.sessions.AddMessage(ctx, sessionKey, providers.Message{
 				Role:    "user",
 				Content: req.Message,
+				Context: req.TurnContext,
 			})
 		}
 		for _, msg := range msgs {

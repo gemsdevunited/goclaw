@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
 // Options keys used in ChatRequest.Options across providers.
@@ -174,6 +176,9 @@ type Message struct {
 	// PersistedContent replaces Content only when the message is written to the
 	// session. It keeps model-only additions out of durable chat history.
 	PersistedContent *string `json:"-"`
+
+	// Context stores the per-turn application context (Gemster, etc.) sent by the client.
+	Context *protocol.TurnContext `json:"context,omitempty"`
 }
 
 // ToolCall represents a tool invocation requested by the LLM.

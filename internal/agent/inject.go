@@ -85,8 +85,13 @@ func (l *Loop) processInjectedMessage(injected InjectedMessage, emitRun func(Age
 			Role:             "user",
 			Content:          wrapped,
 			PersistedContent: &persistedContent,
+			Context:          injected.TurnContext,
 		},
-		forSession: providers.Message{Role: "user", Content: content},
+		forSession: providers.Message{
+			Role:    "user",
+			Content: content,
+			Context: injected.TurnContext,
+		},
 	}, true
 }
 
