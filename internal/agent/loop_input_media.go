@@ -164,5 +164,9 @@ func (l *Loop) enrichInputMedia(ctx context.Context, req *RunRequest, messages [
 		}
 	}
 
+	if len(mediaRefs) > 0 && len(messages) > 0 {
+		messages[len(messages)-1].MediaRefs = append(messages[len(messages)-1].MediaRefs, mediaRefs...)
+	}
+
 	return ctx, messages, mediaRefs
 }

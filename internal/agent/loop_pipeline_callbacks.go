@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -682,10 +683,24 @@ func (l *Loop) makeFlushMessages(req *RunRequest) func(ctx context.Context, sess
 	return func(ctx context.Context, sessionKey string, msgs []providers.Message) error {
 		if !userMsgFlushed && !req.HideInput && req.Message != "" {
 			userMsgFlushed = true
+			var mediaRefs []providers.MediaRef
+			for _, m := range req.Media {
+				mime := m.MimeType
+				if mime == "" {
+					mime = mimeFromExt(filepath.Ext(m.Path))
+				}
+				mediaRefs = append(mediaRefs, providers.MediaRef{
+					ID:       filepath.Base(m.Path),
+					MimeType: mime,
+					Kind:     mediaKindFromMime(mime),
+					Path:     m.Path,
+				})
+			}
 			l.sessions.AddMessage(ctx, sessionKey, providers.Message{
-				Role:    "user",
-				Content: req.Message,
-				Context: req.TurnContext,
+				Role:      "user",
+				Content:   req.Message,
+				Context:   req.TurnContext,
+				MediaRefs: mediaRefs,
 			})
 		}
 		for _, msg := range msgs {
