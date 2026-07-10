@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -43,6 +42,9 @@ func (l *Loop) pipelineCallbacks(req *RunRequest, bridgeRS *runState) pipelineCa
 		event.TenantID = l.tenantID
 		l.emit(event)
 	}
+
+	var persistedMediaRefs []providers.MediaRef
+
 	return pipelineCallbackSet{
 		emitRun:            emitRun,
 		injectContext:      l.makeInjectContext(req),
@@ -50,7 +52,7 @@ func (l *Loop) pipelineCallbacks(req *RunRequest, bridgeRS *runState) pipelineCa
 		resolveWorkspace:   l.makeResolveWorkspace(req),
 		loadContextFiles:   l.makeLoadContextFiles(),
 		buildMessages:      l.makeBuildMessages(req),
-		enrichMedia:        l.makeEnrichMedia(req),
+		enrichMedia:        l.makeEnrichMedia(req, &persistedMediaRefs),
 		injectReminders:    l.makeInjectReminders(req),
 		buildFilteredTools: l.makeBuildFilteredTools(req),
 		callLLM:            l.makeCallLLM(req, emitRun),
@@ -64,7 +66,7 @@ func (l *Loop) pipelineCallbacks(req *RunRequest, bridgeRS *runState) pipelineCa
 		authorizeToolCall:  l.makeAuthorizeToolCall(),
 		checkReadOnly:      l.makeCheckReadOnly(req, bridgeRS),
 		sanitizeContent:    SanitizeAssistantContent,
-		flushMessages:      l.makeFlushMessages(req),
+		flushMessages:      l.makeFlushMessages(req, &persistedMediaRefs),
 		updateMetadata:     l.makeUpdateMetadata(req),
 		bootstrapCleanup:   l.makeBootstrapCleanup(),
 		maybeSummarize:     l.maybeSummarize,
@@ -185,7 +187,7 @@ func (l *Loop) makeLoadSessionHistory() func(ctx context.Context, sessionKey str
 	}
 }
 
-func (l *Loop) makeEnrichMedia(req *RunRequest) func(ctx context.Context, state *pipeline.RunState) error {
+func (l *Loop) makeEnrichMedia(req *RunRequest, persistedRefs *[]providers.MediaRef) func(ctx context.Context, state *pipeline.RunState) error {
 	return func(ctx context.Context, state *pipeline.RunState) error {
 		// enrichInputMedia enriches messages in-place: attaches inline images,
 		// reloads historical media, enriches <media:*> tags, populates context
@@ -195,7 +197,10 @@ func (l *Loop) makeEnrichMedia(req *RunRequest) func(ctx context.Context, state 
 		if len(msgs) == 0 {
 			return nil
 		}
-		enrichedCtx, enrichedMsgs, _ := l.enrichInputMedia(ctx, req, msgs)
+		enrichedCtx, enrichedMsgs, mediaRefs := l.enrichInputMedia(ctx, req, msgs)
+		if persistedRefs != nil {
+			*persistedRefs = mediaRefs
+		}
 		// Propagate enriched context (media images/docs/audio/video refs for tools).
 		state.Ctx = enrichedCtx
 		// Update history with enriched messages (media tags, inline images).
@@ -674,7 +679,7 @@ func (l *Loop) makeRunMemoryFlush() func(ctx context.Context, state *pipeline.Ru
 	}
 }
 
-func (l *Loop) makeFlushMessages(req *RunRequest) func(ctx context.Context, sessionKey string, msgs []providers.Message) error {
+func (l *Loop) makeFlushMessages(req *RunRequest, persistedRefs *[]providers.MediaRef) func(ctx context.Context, sessionKey string, msgs []providers.Message) error {
 	// Track whether user message has been persisted (first flush only).
 	// v2 adds user message to pendingMsgs explicitly; v3 keeps it in history
 	// (via BuildMessages) so it never reaches FlushPending. This closure
@@ -684,17 +689,8 @@ func (l *Loop) makeFlushMessages(req *RunRequest) func(ctx context.Context, sess
 		if !userMsgFlushed && !req.HideInput && req.Message != "" {
 			userMsgFlushed = true
 			var mediaRefs []providers.MediaRef
-			for _, m := range req.Media {
-				mime := m.MimeType
-				if mime == "" {
-					mime = mimeFromExt(filepath.Ext(m.Path))
-				}
-				mediaRefs = append(mediaRefs, providers.MediaRef{
-					ID:       filepath.Base(m.Path),
-					MimeType: mime,
-					Kind:     mediaKindFromMime(mime),
-					Path:     m.Path,
-				})
+			if persistedRefs != nil {
+				mediaRefs = *persistedRefs
 			}
 			l.sessions.AddMessage(ctx, sessionKey, providers.Message{
 				Role:      "user",
