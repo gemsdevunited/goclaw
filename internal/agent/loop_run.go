@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -31,6 +32,7 @@ func (l *Loop) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		event.Channel = req.Channel
 		event.ChatID = req.ChatID
 		event.SessionKey = req.SessionKey
+		event.InteractionID = req.InteractionID
 		event.TenantID = store.TenantIDFromContext(ctx)
 		l.emit(event)
 	}
@@ -68,6 +70,13 @@ func (l *Loop) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		if req.TraceName != "" {
 			traceName = req.TraceName
 		}
+		var metadataBytes []byte
+		if req.InteractionID != "" {
+			metaMap := map[string]any{"interaction_id": req.InteractionID}
+			if b, err := json.Marshal(metaMap); err == nil {
+				metadataBytes = b
+			}
+		}
 		trace := &store.TraceData{
 			ID:           traceID,
 			RunID:        req.RunID,
@@ -80,6 +89,7 @@ func (l *Loop) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 			StartTime:    now,
 			CreatedAt:    now,
 			Tags:         req.TraceTags,
+			Metadata:     metadataBytes,
 		}
 		if l.agentUUID != uuid.Nil {
 			trace.AgentID = &l.agentUUID

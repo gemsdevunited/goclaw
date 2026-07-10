@@ -298,6 +298,7 @@ type AgentEvent struct {
 	Channel    string `json:"channel,omitempty"`
 	ChatID     string `json:"chatId,omitempty"`
 	SessionKey string `json:"sessionKey,omitempty"`
+	InteractionID string `json:"interactionId,omitempty"`
 
 	// TenantID scopes this event to a specific tenant for filtering (not serialized).
 	TenantID uuid.UUID `json:"-"`
@@ -642,6 +643,7 @@ type RunRequest struct {
 	ModelOverride              string                // per-request model override (heartbeat uses cheaper model)
 	ProviderOverride           providers.Provider    // per-request provider override (heartbeat uses different provider)
 	LightContext               bool                  // skip loading context files (only inject ExtraSystemPrompt)
+	InteractionID              string
 
 	// Run classification
 	RunKind       string // "delegation", "announce" — empty for user-initiated runs

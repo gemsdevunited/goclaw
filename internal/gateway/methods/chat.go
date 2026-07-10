@@ -131,13 +131,14 @@ type chatMediaItem struct {
 }
 
 type chatSendParams struct {
-	Message     string                `json:"message"`
-	AgentID     string                `json:"agentId"`
-	SessionKey  string                `json:"sessionKey"`
-	Stream      bool                  `json:"stream"`
-	Media       json.RawMessage       `json:"media,omitempty"` // []string (legacy) or []chatMediaItem
-	RawContext  json.RawMessage       `json:"context,omitempty"`
-	TurnContext *protocol.TurnContext `json:"-"`
+	Message       string                `json:"message"`
+	AgentID       string                `json:"agentId"`
+	SessionKey    string                `json:"sessionKey"`
+	Stream        bool                  `json:"stream"`
+	Media         json.RawMessage       `json:"media,omitempty"` // []string (legacy) or []chatMediaItem
+	RawContext    json.RawMessage       `json:"context,omitempty"`
+	TurnContext   *protocol.TurnContext `json:"-"`
+	InteractionID string                `json:"interactionId,omitempty"`
 }
 
 // parseMedia handles both legacy string paths and new {path,filename} objects.
@@ -415,6 +416,7 @@ func (m *ChatMethods) dispatchChatSends(requests []chatSendRequest) {
 			Stream:            params.Stream,
 			TeamWorkDirective: gate.directive,
 			InjectCh:          injectCh,
+			InteractionID:     params.InteractionID,
 			// Wire trace ID back to the active run so force-abort can mark the
 			// correct trace as cancelled if the goroutine does not exit within 3s.
 			OnTraceCreated: func(traceID uuid.UUID) {
