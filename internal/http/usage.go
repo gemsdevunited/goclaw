@@ -31,6 +31,8 @@ func (h *UsageHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/usage/events/timeseries", h.authMiddleware(h.handleEventTimeSeries))
 	mux.HandleFunc("GET /v1/usage/events/breakdown", h.authMiddleware(h.handleEventBreakdown))
 	mux.HandleFunc("GET /v1/usage/events/summary", h.authMiddleware(h.handleEventSummary))
+	mux.HandleFunc("GET /v1/usage/members", h.authMiddleware(h.handleMemberUsage))
+	mux.HandleFunc("GET /v1/usage/tools", h.authMiddleware(h.handleToolUsage))
 }
 
 func (h *UsageHandler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -213,6 +215,112 @@ func (h *UsageHandler) handleEventSummary(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"summary": summary})
+}
+
+func (h *UsageHandler) handleMemberUsage(w http.ResponseWriter, r *http.Request) {
+	from, to := usageRange(r)
+	if h.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "usage database unavailable"})
+		return
+	}
+	tenantFilter, tenantArgs, next := tenantFilterForUsage(r, 3)
+	rows, err := h.db.QueryContext(r.Context(), `
+		SELECT COALESCE(user_id, ''), COUNT(*), COALESCE(SUM(total_input_tokens), 0),
+		       COALESCE(SUM(total_output_tokens), 0), COALESCE(SUM(total_cost), 0),
+		       COUNT(*) FILTER (WHERE status IN ('error', 'cancelled')),
+		       COALESCE(AVG(duration_ms), 0)
+		FROM traces
+		WHERE parent_trace_id IS NULL AND created_at >= $1 AND created_at < $2`+tenantFilter+`
+		GROUP BY user_id ORDER BY SUM(total_input_tokens + total_output_tokens) DESC LIMIT 100`,
+		append([]any{from, to}, tenantArgs...)...)
+	_ = next
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "member usage query failed"})
+		return
+	}
+	defer rows.Close()
+	type memberRow struct {
+		UserID        string  `json:"user_id"`
+		Requests      int     `json:"requests"`
+		InputTokens   int64   `json:"input_tokens"`
+		OutputTokens  int64   `json:"output_tokens"`
+		Cost          float64 `json:"cost_usd"`
+		Errors        int     `json:"errors"`
+		AvgDurationMS int     `json:"avg_duration_ms"`
+	}
+	result := make([]memberRow, 0, 100)
+	for rows.Next() {
+		var row memberRow
+		if err := rows.Scan(&row.UserID, &row.Requests, &row.InputTokens, &row.OutputTokens, &row.Cost, &row.Errors, &row.AvgDurationMS); err != nil {
+			continue
+		}
+		result = append(result, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"from": from, "to": to, "rows": result})
+}
+
+func (h *UsageHandler) handleToolUsage(w http.ResponseWriter, r *http.Request) {
+	from, to := usageRange(r)
+	if h.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "usage database unavailable"})
+		return
+	}
+	tenantFilter, tenantArgs, next := tenantFilterForUsage(r, 3)
+	rows, err := h.db.QueryContext(r.Context(), `
+		SELECT resource_type, resource_name, COALESCE(SUM(call_count), 0), COALESCE(SUM(error_count), 0),
+		       COALESCE(SUM(total_tokens), 0), COALESCE(SUM(cost_usd), 0)
+		FROM usage_events
+		WHERE event_time >= $1 AND event_time < $2`+tenantFilter+`
+		GROUP BY resource_type, resource_name ORDER BY SUM(call_count) DESC LIMIT 100`,
+		append([]any{from, to}, tenantArgs...)...)
+	_ = next
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "tool usage query failed"})
+		return
+	}
+	defer rows.Close()
+	type toolRow struct {
+		ResourceType string  `json:"resource_type"`
+		ResourceName string  `json:"resource_name"`
+		Calls        int     `json:"calls"`
+		Errors       int     `json:"errors"`
+		TotalTokens  int64   `json:"total_tokens"`
+		Cost         float64 `json:"cost_usd"`
+	}
+	result := make([]toolRow, 0, 100)
+	for rows.Next() {
+		var row toolRow
+		if err := rows.Scan(&row.ResourceType, &row.ResourceName, &row.Calls, &row.Errors, &row.TotalTokens, &row.Cost); err != nil {
+			continue
+		}
+		result = append(result, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"from": from, "to": to, "rows": result})
+}
+
+func usageRange(r *http.Request) (time.Time, time.Time) {
+	now := time.Now().UTC()
+	to := now
+	from := now.Add(-30 * 24 * time.Hour)
+	if value := r.URL.Query().Get("from"); value != "" {
+		if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+			from = parsed
+		}
+	}
+	if value := r.URL.Query().Get("to"); value != "" {
+		if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+			to = parsed
+		}
+	}
+	return from, to
+}
+
+func tenantFilterForUsage(r *http.Request, start int) (string, []any, int) {
+	tid := store.TenantIDFromContext(r.Context())
+	if tid == uuid.Nil {
+		return " AND tenant_id = '00000000-0000-0000-0000-000000000000'", nil, start
+	}
+	return fmt.Sprintf(" AND tenant_id = $%d", start), []any{tid}, start + 1
 }
 
 // usageSummary is the response shape for summary endpoint.
