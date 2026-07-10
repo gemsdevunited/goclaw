@@ -131,11 +131,13 @@ type chatMediaItem struct {
 }
 
 type chatSendParams struct {
-	Message    string          `json:"message"`
-	AgentID    string          `json:"agentId"`
-	SessionKey string          `json:"sessionKey"`
-	Stream     bool            `json:"stream"`
-	Media      json.RawMessage `json:"media,omitempty"` // []string (legacy) or []chatMediaItem
+	Message     string                `json:"message"`
+	AgentID     string                `json:"agentId"`
+	SessionKey  string                `json:"sessionKey"`
+	Stream      bool                  `json:"stream"`
+	Media       json.RawMessage       `json:"media,omitempty"` // []string (legacy) or []chatMediaItem
+	RawContext  json.RawMessage       `json:"context,omitempty"`
+	TurnContext *protocol.TurnContext `json:"-"`
 }
 
 // parseMedia handles both legacy string paths and new {path,filename} objects.
@@ -178,6 +180,12 @@ func (m *ChatMethods) handleSend(ctx context.Context, client *gateway.Client, re
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgInvalidJSON)))
 		return
 	}
+	turnContext, err := parseTurnContext(params.RawContext)
+	if err != nil {
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, err.Error()))
+		return
+	}
+	params.TurnContext = turnContext
 
 	if params.AgentID == "" {
 		// Extract agent key from session key (format: "agent:{key}:{rest}")
@@ -329,8 +337,9 @@ func (m *ChatMethods) dispatchChatSends(requests []chatSendRequest) {
 	// Mid-run injection: debounce rapid follow-ups into a single injected message.
 	if !hasMedia && m.agents.IsSessionBusy(sessionKey) {
 		injected := m.agents.InjectMessage(sessionKey, agent.InjectedMessage{
-			Content: params.Message,
-			UserID:  userID,
+			Content:     params.Message,
+			UserID:      userID,
+			TurnContext: params.TurnContext,
 		})
 		if injected {
 			sendChatOK(requests, map[string]any{"injected": true})
@@ -396,6 +405,7 @@ func (m *ChatMethods) dispatchChatSends(requests []chatSendRequest) {
 		result, err := loop.Run(runCtx, agent.RunRequest{
 			SessionKey:        sessionKey,
 			Message:           message,
+			TurnContext:       params.TurnContext,
 			Media:             mediaFiles,
 			Channel:           "ws",
 			ChatID:            userID, // use stable userID for team/workspace isolation (not ephemeral client.ID())

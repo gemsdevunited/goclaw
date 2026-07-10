@@ -15,6 +15,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/internal/workspace"
+	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
 // contextSetupResult holds the outputs of injectContext that are needed by the main loop.
@@ -349,6 +350,9 @@ func (l *Loop) injectContext(ctx context.Context, req *RunRequest) (contextSetup
 			}
 		}
 	}
+	if err := l.guardTurnContext(req.TurnContext, req.UserID); err != nil {
+		return contextSetupResult{}, err
+	}
 
 	// Inject agent key into context for tool-level resolution (multiple agents share tool registry)
 	ctx = tools.WithToolAgentKey(ctx, l.id)
@@ -426,4 +430,29 @@ func (l *Loop) injectContext(ctx context.Context, req *RunRequest) (contextSetup
 		ctx:                  ctx,
 		resolvedTeamSettings: resolvedTeamSettings,
 	}, nil
+}
+
+func (l *Loop) guardTurnContext(turnContext *protocol.TurnContext, userID string) error {
+	if turnContext == nil || l.inputGuard == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(turnContext)
+	if err != nil {
+		return fmt.Errorf("context blocked: failed to encode attached context")
+	}
+	matches := l.inputGuard.Scan(string(encoded))
+	if len(matches) == 0 {
+		return nil
+	}
+	matchStr := strings.Join(matches, ",")
+	switch l.injectionAction {
+	case "block":
+		slog.Warn("security.context_injection_blocked", "agent", l.id, "user", userID, "patterns", matchStr, "context_len", len(encoded))
+		return fmt.Errorf("context blocked: potential prompt injection detected (%s)", matchStr)
+	case "log":
+		slog.Info("security.context_injection_detected", "agent", l.id, "user", userID, "patterns", matchStr, "context_len", len(encoded))
+	default:
+		slog.Warn("security.context_injection_detected", "agent", l.id, "user", userID, "patterns", matchStr, "context_len", len(encoded))
+	}
+	return nil
 }

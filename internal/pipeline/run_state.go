@@ -6,6 +6,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/workspace"
+	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
 // RunState is the shared mutable state for a single pipeline run.
@@ -74,6 +75,7 @@ func (rs *RunState) BuildResult() *RunResult {
 type RunInput struct {
 	SessionKey                 string
 	Message                    string
+	TurnContext                *protocol.TurnContext
 	Media                      []bus.MediaFile
 	ForwardMedia               []bus.MediaFile
 	Channel                    string

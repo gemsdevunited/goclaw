@@ -159,21 +159,8 @@ func (l *Loop) buildPipelineDeps(req *RunRequest, bridgeRS *runState) pipeline.P
 
 		// Observe: drain InjectCh
 		DrainInjectCh: func() []providers.Message {
-			if req.InjectCh == nil {
-				return nil
-			}
-			var msgs []providers.Message
-			for {
-				select {
-				case injected := <-req.InjectCh:
-					msgs = append(msgs, providers.Message{
-						Role:    "user",
-						Content: injected.Content,
-					})
-				default:
-					return msgs
-				}
-			}
+			forLLM, _ := l.drainInjectChannel(req.InjectCh, cb.emitRun)
+			return forLLM
 		},
 
 		// Checkpoint + Finalize
@@ -220,6 +207,7 @@ func convertRunInput(req *RunRequest) *pipeline.RunInput {
 	return &pipeline.RunInput{
 		SessionKey:                 req.SessionKey,
 		Message:                    req.Message,
+		TurnContext:                req.TurnContext,
 		Media:                      req.Media,
 		ForwardMedia:               req.ForwardMedia,
 		Channel:                    req.Channel,

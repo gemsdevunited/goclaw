@@ -155,6 +155,14 @@ func mergeChatSendRequests(items []chatSendRequest) chatSendParams {
 		}
 	}
 	last.Message = strings.Join(parts, "\n")
+	if last.TurnContext == nil {
+		for i := len(items) - 2; i >= 0; i-- {
+			if items[i].params.TurnContext != nil {
+				last.TurnContext = items[i].params.TurnContext
+				break
+			}
+		}
+	}
 	return last
 }
 

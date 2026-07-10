@@ -54,16 +54,16 @@ func (s *CheckpointStage) Execute(ctx context.Context, state *RunState) error {
 }
 
 func persistableMessages(messages []providers.Message) []providers.Message {
-	for _, msg := range messages {
-		if msg.Transient {
-			filtered := make([]providers.Message, 0, len(messages))
-			for _, candidate := range messages {
-				if !candidate.Transient {
-					filtered = append(filtered, candidate)
-				}
-			}
-			return filtered
+	var persisted []providers.Message
+	for _, candidate := range messages {
+		if candidate.Transient {
+			continue
 		}
+		if candidate.PersistedContent != nil {
+			candidate.Content = *candidate.PersistedContent
+			candidate.PersistedContent = nil
+		}
+		persisted = append(persisted, candidate)
 	}
-	return messages
+	return persisted
 }

@@ -1,10 +1,12 @@
 package methods
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/nextlevelbuilder/goclaw/internal/config"
+	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
 func TestMergeChatSendRequestsJoinsContentAndUsesLatestParams(t *testing.T) {
@@ -20,6 +22,21 @@ func TestMergeChatSendRequestsJoinsContentAndUsesLatestParams(t *testing.T) {
 	}
 	if !got.Stream {
 		t.Fatal("latest params should win for stream flag")
+	}
+}
+
+func TestMergeChatSendRequestsUsesLatestNonNilContext(t *testing.T) {
+	first := &protocol.TurnContext{Version: protocol.TurnContextVersion}
+	second := &protocol.TurnContext{Version: protocol.TurnContextVersion, Data: json.RawMessage(`{"route":"/new"}`)}
+	items := []chatSendRequest{
+		{params: chatSendParams{Message: "first", TurnContext: first}},
+		{params: chatSendParams{Message: "second"}},
+		{params: chatSendParams{Message: "third", TurnContext: second}},
+		{params: chatSendParams{Message: "fourth"}},
+	}
+	got := mergeChatSendRequests(items)
+	if got.TurnContext != second {
+		t.Fatal("expected latest non-nil context")
 	}
 }
 

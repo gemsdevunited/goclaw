@@ -89,7 +89,18 @@ Send a message to an agent and trigger execution.
   "agentId": "uuid-or-key",
   "sessionKey": "optional-session",
   "stream": true,
-  "media": [{"type": "image", "url": "..."}]
+  "media": [{"type": "image", "url": "..."}],
+  "context": {
+    "version": 1,
+    "data": {
+      "app": "my-app",
+      "route": "/main-dashboard",
+      "selectedItem": {
+        "id": "item-123",
+        "title": "Reference Item"
+      }
+    }
+  }
 }
 ```
 
@@ -107,6 +118,8 @@ Send a message to an agent and trigger execution.
 When `stream: true`, intermediate events are emitted: `chunk`, `tool.call`, `tool.result`, `run.started`, `run.completed`.
 
 Rapid text-only `chat.send` requests for the same user and session are debounced by `gateway.inbound_debounce_ms`: `0` means no debounce and positive values set the wait window. Agents can override the global value with `other_config.inbound_debounce_ms`; unset inherits the global config. The merged message keeps request params from the latest send and joins text with newlines. Cancel keywords bypass debounce and abort the active run immediately. Media sends bypass the wait window and drain any pending text into the same dispatch.
+
+`context` is optional per-turn reference data. GoClaw validates it, does not dereference client URIs, and renders it only for the active model turn. It is not persisted in session history and cannot grant identity, tenant, filesystem, or data access. When debounced sends are merged, the latest non-null context is used.
 
 ### `chat.history`
 

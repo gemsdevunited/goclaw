@@ -13,8 +13,9 @@ import (
 // InjectedMessage represents a user message injected into a running agent loop
 // at the turn boundary (after tool results, before next LLM call).
 type InjectedMessage struct {
-	Content string
-	UserID  string
+	Content     string
+	UserID      string
+	TurnContext *protocol.TurnContext
 }
 
 // processedInjection holds the two message forms: one for the LLM (with context wrapper)
@@ -30,6 +31,9 @@ const injectBufferSize = 5
 // processInjectedMessage validates and wraps an injected message for the LLM.
 // Returns nil, false if the message should be skipped (blocked by input guard).
 func (l *Loop) processInjectedMessage(injected InjectedMessage, emitRun func(AgentEvent)) (*processedInjection, bool) {
+	if err := l.guardTurnContext(injected.TurnContext, injected.UserID); err != nil {
+		return nil, false
+	}
 	// Security: scan injected content with input guard
 	if l.inputGuard != nil {
 		if matches := l.inputGuard.Scan(injected.Content); len(matches) > 0 {
@@ -57,7 +61,7 @@ func (l *Loop) processInjectedMessage(injected InjectedMessage, emitRun func(Age
 	}
 
 	// Wrap with context hint so LLM knows this is a mid-run follow-up
-	wrapped := fmt.Sprintf("[User sent a follow-up message while you were working]\n%s", content)
+	wrapped := fmt.Sprintf("[User sent a follow-up message while you were working]\n%s", renderTurnContext(content, injected.TurnContext))
 
 	slog.Info("mid-run injection",
 		"agent", l.id, "user", injected.UserID,
@@ -75,8 +79,13 @@ func (l *Loop) processInjectedMessage(injected InjectedMessage, emitRun func(Age
 		})
 	}
 
+	persistedContent := content
 	return &processedInjection{
-		forLLM:     providers.Message{Role: "user", Content: wrapped},
+		forLLM: providers.Message{
+			Role:             "user",
+			Content:          wrapped,
+			PersistedContent: &persistedContent,
+		},
 		forSession: providers.Message{Role: "user", Content: content},
 	}, true
 }

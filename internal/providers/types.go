@@ -170,6 +170,10 @@ type Message struct {
 	// Transient messages are runtime-only context for the next provider call.
 	// They must not be persisted to session history or serialized to providers.
 	Transient bool `json:"-"`
+
+	// PersistedContent replaces Content only when the message is written to the
+	// session. It keeps model-only additions out of durable chat history.
+	PersistedContent *string `json:"-"`
 }
 
 // ToolCall represents a tool invocation requested by the LLM.
