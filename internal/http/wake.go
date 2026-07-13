@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -42,6 +43,11 @@ type wakeRequest struct {
 	SessionKey string         `json:"session_key,omitempty"`
 	UserID     string         `json:"user_id,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
+	// Async triggers fire-and-forget execution: returns 202 immediately and
+	// runs the agent in a background goroutine with a detached context.
+	// Use this when the caller cannot keep the HTTP connection open long enough
+	// for the agent to complete (e.g. Cloudflare Tunnel TTL constraints).
+	Async bool `json:"async,omitempty"`
 }
 
 type wakeResponse struct {
@@ -121,8 +127,46 @@ func (h *WakeHandler) handleWake(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runID := uuid.NewString()
-	slog.Info("wake request", "agent", agentID, "user", userID, "session", sessionKey)
+	slog.Info("wake request", "agent", agentID, "user", userID, "session", sessionKey, "async", req.Async)
 
+	// Async mode: return 202 immediately, run agent in background goroutine.
+	// The HTTP connection is released before agent execution begins, so
+	// reverse-proxy TTL constraints (e.g. Cloudflare Tunnel ~100s) won't
+	// interrupt long-running agent tasks like AI code review.
+	if req.Async {
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"status": "accepted",
+			"run_id": runID,
+			"session_key": sessionKey,
+		})
+
+		// Detach from the HTTP request context so the goroutine is not cancelled
+		// when the connection closes. InjectTeamDispatch must be called inside
+		// the goroutine using the new context.
+		detachedCtx := context.WithoutCancel(ctx)
+		postTurn := h.postTurn
+		go func() {
+			gCtx, drain := tools.InjectTeamDispatch(detachedCtx, postTurn)
+			defer drain()
+			_, runErr := loop.Run(gCtx, agent.RunRequest{
+				SessionKey: sessionKey,
+				Message:    req.Message,
+				Channel:    "wake",
+				ChatID:     "api",
+				RunID:      runID,
+				UserID:     userID,
+				Stream:     false,
+			})
+			if runErr != nil {
+				slog.Error("wake.async.run_failed", "agent", agentID, "run_id", runID, "error", runErr)
+				return
+			}
+			slog.Info("wake.async.run_completed", "agent", agentID, "run_id", runID, "session", sessionKey)
+		}()
+		return
+	}
+
+	// Sync mode (default): block until agent completes.
 	ctx, drainTeamDispatch := tools.InjectTeamDispatch(ctx, h.postTurn)
 	defer drainTeamDispatch()
 
