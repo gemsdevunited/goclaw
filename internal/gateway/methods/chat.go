@@ -494,10 +494,22 @@ func (m *ChatMethods) dispatchChatSends(requests []chatSendRequest) {
 			mediaResults = append([]agent.MediaResult{*ttsAudio}, mediaResults...)
 		}
 		if len(mediaResults) > 0 {
-			resp["media"] = mediaResults
+			resp["media"] = signChatMediaResults(mediaResults, httpapi.FileSigningKey())
 		}
 		sendChatOK(requests, resp)
 	}()
+}
+
+// signChatMediaResults prepares the direct chat.send response for browser use.
+// Agent results contain local workspace paths, while the file server requires a
+// short-lived tokenized /v1/files URL.
+func signChatMediaResults(mediaResults []agent.MediaResult, secret string) []agent.MediaResult {
+	signed := make([]agent.MediaResult, len(mediaResults))
+	for i, mediaResult := range mediaResults {
+		signed[i] = mediaResult
+		signed[i].Path = httpapi.SignMediaPath(mediaResult.Path, secret)
+	}
+	return signed
 }
 
 func sendChatOK(requests []chatSendRequest, payload map[string]any) {
