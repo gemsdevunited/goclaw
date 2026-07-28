@@ -258,7 +258,7 @@ func (l *Loop) maybeSummarize(ctx context.Context, sessionKey string) {
 	}
 
 	// Resolve keepLast before spawning goroutine (reads config under caller's scope).
-	keepLast := 4
+	keepLast := 20
 	if l.compactionCfg != nil && l.compactionCfg.KeepLastMessages > 0 {
 		keepLast = l.compactionCfg.KeepLastMessages
 	}

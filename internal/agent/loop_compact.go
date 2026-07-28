@@ -56,7 +56,7 @@ func (l *Loop) compactMessagesInPlace(ctx context.Context, messages []providers.
 	}
 
 	// Resolve keepCount from compaction config (same defaults as maybeSummarize).
-	keepCount := 4
+	keepCount := 20
 	if l.compactionCfg != nil && l.compactionCfg.KeepLastMessages > 0 {
 		keepCount = l.compactionCfg.KeepLastMessages
 	}

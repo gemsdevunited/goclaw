@@ -81,7 +81,7 @@ func TestCompactMessagesInPlace_NonPositiveTimeoutFallsBackToDefault(t *testing.
 }
 
 func compactableMessages() []providers.Message {
-	msgs := make([]providers.Message, 10)
+	msgs := make([]providers.Message, 30)
 	for i := range msgs {
 		if i%2 == 0 {
 			msgs[i] = providers.Message{Role: "user", Content: "user message"}

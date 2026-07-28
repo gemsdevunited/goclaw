@@ -36,8 +36,8 @@ func TestCompactMessagesInPlace_MaxTokensDynamic(t *testing.T) {
 		// tokenCounter nil → estimateSummaryInputTokens uses rune/3 fallback
 	}
 
-	// Build 10 dummy messages (>= 6 required by compactMessagesInPlace).
-	msgs := make([]providers.Message, 10)
+	// Build 30 dummy messages (>= 6 required by compactMessagesInPlace).
+	msgs := make([]providers.Message, 30)
 	for i := range msgs {
 		if i%2 == 0 {
 			msgs[i] = providers.Message{Role: "user", Content: "user message"}

@@ -99,7 +99,7 @@ func TestMaybeSummarize_MaxTokensDynamic(t *testing.T) {
 	// EstimateTokens uses ~4 chars/token; 9000 tokens * 4 = 36000 chars of content.
 	// Use 5 user-assistant pairs each carrying ~9000 chars so EstimateTokens > threshold.
 	longContent := makeLongString(9000)
-	history := make([]providers.Message, 10)
+	history := make([]providers.Message, 30)
 	for i := range history {
 		if i%2 == 0 {
 			history[i] = providers.Message{Role: "user", Content: longContent}
@@ -127,7 +127,7 @@ func TestMaybeSummarize_MaxTokensDynamic(t *testing.T) {
 		sessions:      sessions,
 		// hasMemory = false → shouldRunMemoryFlush returns false (skip memory flush)
 		hasMemory: false,
-		// compactionCfg nil → uses DefaultHistoryShare (0.85), keepLast=4
+		// compactionCfg nil → uses DefaultHistoryShare (0.85), keepLast=20
 		compactionCfg: nil,
 		// tokenCounter nil → estimateSummaryInputTokens uses rune/3 fallback
 	}
@@ -157,9 +157,9 @@ func TestMaybeSummarize_MaxTokensDynamic(t *testing.T) {
 	}
 
 	// Compute expected using the same formula the implementation uses.
-	// keepLast=4, history has 10 messages → toSummarize = history[:6].
+	// keepLast=20, history has 30 messages → toSummarize = history[:10].
 	// tokenCounter nil → rune/3 fallback on the fixture content.
-	toSummarize := history[:len(history)-4]
+	toSummarize := history[:len(history)-20]
 	expectedIn := loop.estimateSummaryInputTokens(toSummarize)
 	wantMax := dynamicSummaryMax(expectedIn)
 	if maxTokens != wantMax {
@@ -204,7 +204,7 @@ func TestMaybeSummarize_LogsTriggerDecisionOverThreshold(t *testing.T) {
 	const contextWindow = 10000
 
 	longContent := makeLongString(9000)
-	history := make([]providers.Message, 10)
+	history := make([]providers.Message, 30)
 	for i := range history {
 		if i%2 == 0 {
 			history[i] = providers.Message{Role: "user", Content: longContent}

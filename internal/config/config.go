@@ -331,7 +331,7 @@ type AgentDefaults struct {
 type CompactionConfig struct {
 	ReserveTokensFloor int                `json:"reserveTokensFloor,omitempty"` // min reserve tokens (default 20000)
 	MaxHistoryShare    float64            `json:"maxHistoryShare,omitempty"`    // max share of context for history (default 0.85)
-	KeepLastMessages   int                `json:"keepLastMessages,omitempty"`   // messages to keep after compaction (default 4)
+	KeepLastMessages   int                `json:"keepLastMessages,omitempty"`   // messages to keep after compaction (default 20)
 	TimeoutSeconds     int                `json:"timeoutSeconds,omitempty"`     // summarization timeout in seconds (default 120)
 	MemoryFlush        *MemoryFlushConfig `json:"memoryFlush,omitempty"`        // pre-compaction flush
 }
