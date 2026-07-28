@@ -246,6 +246,10 @@ flowchart TD
 | `exec.approval.approve` | Approve an exec request |
 | `exec.approval.deny` | Deny an exec request |
 
+Pending approvals are isolated by the connected tenant. Tenant admins can manage
+all pending approvals in that tenant; non-admin users can view and resolve only
+their own requests.
+
 ### Usage and Send
 
 | Method | Description |

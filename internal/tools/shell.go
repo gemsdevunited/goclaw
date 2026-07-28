@@ -340,7 +340,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *Result {
 			// This lets agents "request permission" from admin to install packages.
 			if t.approvalMgr != nil && matchesAny(normalizedCommand, pkgInstallPatterns) {
 				slog.Info("exec: package install requires approval", "command", truncateCmd(command, 100), "agent", t.agentID)
-				decision, err := t.approvalMgr.RequestApproval(command, t.agentID, 2*time.Minute)
+				decision, err := t.approvalMgr.RequestApproval(ctx, command, t.agentID, 2*time.Minute)
 				if err != nil {
 					return ErrorResult(fmt.Sprintf("package install approval: %v", err))
 				}
@@ -401,11 +401,11 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *Result {
 
 	// Exec approval check (matching TS exec-approval.ts pipeline)
 	if t.approvalMgr != nil {
-		switch t.approvalMgr.CheckCommand(command) {
+		switch t.approvalMgr.CheckCommand(ctx, command, t.agentID) {
 		case "deny":
 			return ErrorResult("command denied by exec approval policy")
 		case "ask":
-			decision, err := t.approvalMgr.RequestApproval(command, t.agentID, 2*time.Minute)
+			decision, err := t.approvalMgr.RequestApproval(ctx, command, t.agentID, 2*time.Minute)
 			if err != nil {
 				return ErrorResult(fmt.Sprintf("exec approval: %v", err))
 			}

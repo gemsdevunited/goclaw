@@ -81,6 +81,11 @@ flowchart TD
 
 **Path traversal**: `resolvePath()` applies `filepath.Clean()` then `HasPrefix()` to ensure all paths stay within the workspace. With `restrict = true`, any path outside the workspace is blocked.
 
+**Exec approval isolation**: Pending exec approvals and runtime `allow-always`
+decisions are scoped to tenant, requesting user, agent, and binary. Tenant admins
+may manage pending requests within their selected tenant; non-admin users cannot
+view or resolve another user's request.
+
 **PathDenyable** -- An interface that lets filesystem tools reject specific path prefixes:
 
 ```go

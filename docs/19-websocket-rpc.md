@@ -853,9 +853,19 @@ The server pushes events to connected clients via event frames. Key event types:
 | `trace.status` | Trace status changed (cancelled, completed, error) |
 | `session.updated` | Session metadata changed |
 | `agent.updated` | Agent config changed |
-| `cron.fired` | Cron job triggered |
+| `cron` | User-owned cron job lifecycle (`running`, `completed`, `error`) |
 | `team.task.*` | Team task lifecycle events |
 | `exec.approval.pending` | Command awaiting approval |
+
+### Live Message Delivery Privacy
+
+Live `agent`/`chat` messages and `cron` lifecycle events are routed by both
+tenant and `userId`. This applies to every connected role, including Admin and
+Owner: privileged clients receive another user's live messages only when they
+are connected as that same user. Events without user routing context fail
+closed instead of being broadcast. Admins inspect other users' run details
+through the trace APIs and Trace UI rather than subscribing to their live chat
+stream.
 
 ### V3 Events
 

@@ -7,6 +7,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway"
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
+	"github.com/nextlevelbuilder/goclaw/internal/permissions"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
@@ -35,7 +36,7 @@ func (m *ExecApprovalMethods) handleList(_ context.Context, client *gateway.Clie
 		}))
 		return
 	}
-	pending := m.manager.ListPending()
+	pending := m.manager.ListPendingForTenant(client.TenantID())
 
 	type pendingInfo struct {
 		ID        string `json:"id"`
@@ -46,6 +47,9 @@ func (m *ExecApprovalMethods) handleList(_ context.Context, client *gateway.Clie
 
 	items := make([]pendingInfo, 0, len(pending))
 	for _, pa := range pending {
+		if !permissions.HasMinRole(client.Role(), permissions.RoleAdmin) && pa.UserID != client.UserID() {
+			continue
+		}
 		items = append(items, pendingInfo{
 			ID:        pa.ID,
 			Command:   pa.Command,
@@ -84,7 +88,7 @@ func (m *ExecApprovalMethods) handleApprove(ctx context.Context, client *gateway
 		decision = tools.ApprovalAllowAlways
 	}
 
-	if err := m.manager.Resolve(params.ID, decision); err != nil {
+	if err := m.resolve(client, params.ID, decision); err != nil {
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrNotFound, err.Error()))
 		return
 	}
@@ -115,7 +119,7 @@ func (m *ExecApprovalMethods) handleDeny(ctx context.Context, client *gateway.Cl
 		return
 	}
 
-	if err := m.manager.Resolve(params.ID, tools.ApprovalDeny); err != nil {
+	if err := m.resolve(client, params.ID, tools.ApprovalDeny); err != nil {
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrNotFound, err.Error()))
 		return
 	}
@@ -125,4 +129,18 @@ func (m *ExecApprovalMethods) handleDeny(ctx context.Context, client *gateway.Cl
 		"decision": "deny",
 	}))
 	emitAudit(m.eventBus, client, "exec.denied", "exec", params.ID)
+}
+
+func (m *ExecApprovalMethods) resolve(client *gateway.Client, id string, decision tools.ApprovalDecision) error {
+	if !permissions.HasMinRole(client.Role(), permissions.RoleAdmin) {
+		pending := m.manager.ListPendingForTenant(client.TenantID())
+		for _, approval := range pending {
+			if approval.ID == id && approval.UserID == client.UserID() {
+				return m.manager.ResolveForTenant(client.TenantID(), id, decision)
+			}
+		}
+		return tools.ErrApprovalNotFound
+	}
+
+	return m.manager.ResolveForTenant(client.TenantID(), id, decision)
 }

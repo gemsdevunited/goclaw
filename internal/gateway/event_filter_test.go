@@ -7,6 +7,7 @@ import (
 
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/permissions"
+	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
@@ -124,15 +125,16 @@ func TestClientCanReceiveEvent_TenantMismatch_Blocked(t *testing.T) {
 	}
 }
 
-func TestClientCanReceiveEvent_UnscopedEvent_OnlyOwnerReceives(t *testing.T) {
-	// Event with no tenant — only owner-role clients should get it.
+func TestClientCanReceiveEvent_UnscopedUserMessage_BlockedForOwner(t *testing.T) {
+	// User messages without tenant/user routing context must fail closed, even
+	// for owners. Admins can inspect other users' runs through traces.
 	ownerClient := makeClient(permissions.RoleOwner, "owner", masterTenant)
 	adminClient := makeClient(permissions.RoleAdmin, "admin", masterTenant)
 
 	evt := makeEvent(protocol.EventAgent, uuid.Nil, nil) // no tenant on event
 
-	if !clientCanReceiveEvent(ownerClient, evt) {
-		t.Error("owner should receive unscoped events")
+	if clientCanReceiveEvent(ownerClient, evt) {
+		t.Error("owner should NOT receive unscoped user messages")
 	}
 	if clientCanReceiveEvent(adminClient, evt) {
 		t.Error("non-owner admin should NOT receive unscoped events (fail-closed)")
@@ -155,11 +157,74 @@ func TestClientCanReceiveEvent_AgentEvent_FilteredByUserID(t *testing.T) {
 	}
 }
 
-func TestClientCanReceiveEvent_AgentEvent_AdminSeesAll(t *testing.T) {
+func TestClientCanReceiveEvent_AgentEvent_AdminOnlyReceivesOwnMessages(t *testing.T) {
 	admin := makeClient(permissions.RoleAdmin, "admin", masterTenant)
-	evt := makeEvent(protocol.EventAgent, masterTenant, map[string]any{"userId": "user-x"})
+	ownEvent := makeEvent(protocol.EventAgent, masterTenant, map[string]any{"userId": "admin"})
+	otherUserEvent := makeEvent(protocol.EventAgent, masterTenant, map[string]any{"userId": "user-x"})
+
+	if !clientCanReceiveEvent(admin, ownEvent) {
+		t.Error("admin should receive their own agent messages")
+	}
+	if clientCanReceiveEvent(admin, otherUserEvent) {
+		t.Error("admin should NOT receive another user's agent messages")
+	}
+}
+
+func TestClientCanReceiveEvent_ChatEvent_MissingUserIDFailsClosed(t *testing.T) {
+	admin := makeClient(permissions.RoleAdmin, "admin", masterTenant)
+	evt := makeEvent(protocol.EventChat, masterTenant, map[string]any{"content": "private"})
+
+	if clientCanReceiveEvent(admin, evt) {
+		t.Error("chat messages without user routing context must not be broadcast")
+	}
+}
+
+func TestClientCanReceiveEvent_CronEvent_OnlyOwnerReceivesLifecycleEvent(t *testing.T) {
+	user := makeClient(permissions.RoleOperator, "user-a", masterTenant)
+	admin := makeClient(permissions.RoleAdmin, "admin", masterTenant)
+	evt := makeEvent(protocol.EventCron, masterTenant, store.CronEvent{
+		Action: "completed",
+		JobID:  "job-1",
+		UserID: "user-a",
+	})
+
+	if !clientCanReceiveEvent(user, evt) {
+		t.Error("cron owner should receive their lifecycle event")
+	}
+	if clientCanReceiveEvent(admin, evt) {
+		t.Error("admin should NOT receive another user's cron lifecycle event")
+	}
+}
+
+func TestClientCanReceiveEvent_CronEvent_MissingUserIDFailsClosed(t *testing.T) {
+	owner := makeClient(permissions.RoleOwner, "owner", masterTenant)
+	evt := makeEvent(protocol.EventCron, masterTenant, store.CronEvent{
+		Action: "running",
+		JobID:  "job-1",
+	})
+
+	if clientCanReceiveEvent(owner, evt) {
+		t.Error("cron lifecycle events without user routing context must not be broadcast")
+	}
+}
+
+func TestClientCanReceiveEvent_TraceEvent_AdminStillSeesOtherUsers(t *testing.T) {
+	admin := makeClient(permissions.RoleAdmin, "admin", masterTenant)
+	evt := makeEvent(protocol.EventTraceUpdated, masterTenant, map[string]any{
+		"userId": "user-a",
+	})
+
 	if !clientCanReceiveEvent(admin, evt) {
-		t.Error("admin should receive all agent events")
+		t.Error("admin should retain cross-user trace visibility")
+	}
+}
+
+func TestClientCanReceiveEvent_ExecApprovalMissingUserIDFailsClosedForNonAdmin(t *testing.T) {
+	operator := makeClient(permissions.RoleOperator, "user-a", masterTenant)
+	evt := makeEvent(protocol.EventExecApprovalReq, masterTenant, map[string]any{"command": "private"})
+
+	if clientCanReceiveEvent(operator, evt) {
+		t.Error("exec approvals without a requester must not be broadcast to non-admin users")
 	}
 }
 

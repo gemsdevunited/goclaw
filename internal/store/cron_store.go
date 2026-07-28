@@ -186,12 +186,13 @@ type CronJobPatch struct {
 
 // CronEvent represents a job lifecycle event sent to subscribers.
 type CronEvent struct {
-	Action  string `json:"action" db:"-"` // "running", "completed", "error"
-	JobID   string `json:"jobId" db:"-"`
-	JobName string `json:"jobName,omitempty" db:"-"`
-	UserID  string `json:"userId,omitempty" db:"-"` // job owner for event filtering
-	Status  string `json:"status,omitempty" db:"-"` // final status for completed/error
-	Error   string `json:"error,omitempty" db:"-"`
+	Action   string    `json:"action" db:"-"` // "running", "completed", "error"
+	JobID    string    `json:"jobId" db:"-"`
+	JobName  string    `json:"jobName,omitempty" db:"-"`
+	UserID   string    `json:"userId,omitempty" db:"-"` // job owner for event filtering
+	TenantID uuid.UUID `json:"-" db:"-"`                // internal WS routing scope
+	Status   string    `json:"status,omitempty" db:"-"` // final status for completed/error
+	Error    string    `json:"error,omitempty" db:"-"`
 }
 
 // CronStore manages scheduled jobs.

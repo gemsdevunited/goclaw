@@ -42,32 +42,36 @@ func clientCanReceiveEvent(c *Client, event bus.Event) bool {
 		return false // fail-closed: regular users blocked from unscoped events
 	}
 
-	// Admin sees everything (when not tenant-scoped, handled above).
-	if permissions.HasMinRole(c.role, permissions.RoleAdmin) {
-		return true
-	}
-
-	// Agent / chat events: filter by UserID.
+	// Live agent/chat messages are private delivery, not an admin observation
+	// surface. Privileged users inspect other users' runs through traces, so
+	// apply this filter before the admin role bypass.
 	if event.Name == protocol.EventAgent || event.Name == protocol.EventChat {
 		if uid := extractEventUserID(event); uid != "" {
 			return uid == c.userID
 		}
-		return true // no routing context → broadcast (legacy)
+		return false // fail-closed: never broadcast messages without a recipient
 	}
 
-	// Session events: filter by UserID in payload.
-	if event.Name == protocol.EventSessionUpdated {
-		if uid := extractMapField(event.Payload, "userId"); uid != "" {
-			return uid == c.userID
-		}
-		return true
-	}
-
-	// Cron events: filter by UserID in payload.
+	// Cron lifecycle events are also user-targeted and must pass through the
+	// same strict routing before privileged event visibility is considered.
 	if event.Name == protocol.EventCron {
 		if ce, ok := event.Payload.(store.CronEvent); ok && ce.UserID != "" {
 			return ce.UserID == c.userID
 		}
+		if uid := extractMapField(event.Payload, "userId"); uid != "" {
+			return uid == c.userID
+		}
+		return false
+	}
+
+	// Admin sees non-message operational events within the tenant. Cross-user
+	// run details remain available through the trace APIs/UI.
+	if permissions.HasMinRole(c.role, permissions.RoleAdmin) {
+		return true
+	}
+
+	// Session events: filter by UserID in payload.
+	if event.Name == protocol.EventSessionUpdated {
 		if uid := extractMapField(event.Payload, "userId"); uid != "" {
 			return uid == c.userID
 		}
@@ -122,7 +126,7 @@ func clientCanReceiveEvent(c *Client, event bus.Event) bool {
 		if uid := extractMapField(event.Payload, "userId"); uid != "" {
 			return uid == c.userID
 		}
-		return true
+		return false
 	}
 
 	// Zalo personal QR events: admin-only (channel management).

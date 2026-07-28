@@ -27,6 +27,14 @@ func makeHeartbeatRunFn(sched *scheduler.Scheduler) func(ctx context.Context, re
 	}
 }
 
+// wireCronEvents routes cron lifecycle events through the message bus so the
+// gateway's tenant and user filters run before WebSocket delivery.
+func wireCronEvents(cronStore store.CronStore, eventBus bus.EventPublisher) {
+	cronStore.SetOnEvent(func(event store.CronEvent) {
+		bus.BroadcastForTenant(eventBus, protocol.EventCron, event.TenantID, event)
+	})
+}
+
 // startCronAndHeartbeat starts the cron service and heartbeat ticker, wires the heartbeat
 // wake function to the tool + RPC methods, and sets the adaptive token estimate function.
 // Returns the heartbeat ticker (needed by lifecycle for shutdown).
@@ -43,9 +51,7 @@ func startCronAndHeartbeat(
 ) *heartbeat.Ticker {
 	// Start cron service with job handler (routes through scheduler's cron lane)
 	pgStores.Cron.SetOnJob(makeCronJobHandler(sched, msgBus, cfg, channelMgr, pgStores.Sessions, pgStores.Agents, pgStores.Tenants, pgStores.Providers, providerRegistry))
-	pgStores.Cron.SetOnEvent(func(event store.CronEvent) {
-		server.BroadcastEvent(*protocol.NewEvent(protocol.EventCron, event))
-	})
+	wireCronEvents(pgStores.Cron, msgBus)
 	if err := pgStores.Cron.Start(); err != nil {
 		slog.Warn("cron service failed to start", "error", err)
 	}

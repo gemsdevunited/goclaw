@@ -1,12 +1,18 @@
 package tools
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
 // ExecSecurity determines the overall security mode for command execution.
@@ -91,16 +97,32 @@ type PendingApproval struct {
 	Command   string    `json:"command"`
 	AgentID   string    `json:"agentId"`
 	CreatedAt time.Time `json:"createdAt"`
+	TenantID  uuid.UUID `json:"-"`
+	UserID    string    `json:"-"`
 	resultCh  chan ApprovalDecision
+}
+
+var (
+	// ErrApprovalNotFound intentionally covers missing, expired, and out-of-scope
+	// approvals so callers cannot enumerate another tenant's pending requests.
+	ErrApprovalNotFound = errors.New("approval not found")
+	ErrApprovalScope    = errors.New("exec approval requires tenant and user context")
+)
+
+type approvalAllowKey struct {
+	tenantID uuid.UUID
+	userID   string
+	agentID  string
+	binary   string
 }
 
 // ExecApprovalManager manages pending approval requests and the dynamic allowlist.
 type ExecApprovalManager struct {
-	config       ExecApprovalConfig
-	pending      map[string]*PendingApproval
-	alwaysAllow  map[string]bool // patterns added via "allow-always" decisions
-	mu           sync.Mutex
-	nextID       int
+	config      ExecApprovalConfig
+	pending     map[string]*PendingApproval
+	alwaysAllow map[approvalAllowKey]bool // requester-scoped "allow-always" decisions
+	mu          sync.Mutex
+	nextID      int
 }
 
 // NewExecApprovalManager creates an approval manager with the given config.
@@ -108,19 +130,19 @@ func NewExecApprovalManager(cfg ExecApprovalConfig) *ExecApprovalManager {
 	return &ExecApprovalManager{
 		config:      cfg,
 		pending:     make(map[string]*PendingApproval),
-		alwaysAllow: make(map[string]bool),
+		alwaysAllow: make(map[approvalAllowKey]bool),
 	}
 }
 
 // CheckCommand evaluates whether a command should be executed, blocked, or needs approval.
 // Returns: "allow", "deny", or "ask".
-func (m *ExecApprovalManager) CheckCommand(command string) string {
+func (m *ExecApprovalManager) CheckCommand(ctx context.Context, command, fallbackAgentID string) string {
 	switch m.config.Security {
 	case ExecSecurityDeny:
 		return "deny"
 
 	case ExecSecurityAllowlist:
-		if m.matchesAllowlist(command) {
+		if m.matchesAllowlist(ctx, command, fallbackAgentID) {
 			if m.config.Ask == ExecAskAlways {
 				return "ask"
 			}
@@ -138,7 +160,7 @@ func (m *ExecApprovalManager) CheckCommand(command string) string {
 		case ExecAskAlways:
 			return "ask"
 		case ExecAskOnMiss:
-			if m.matchesAllowlist(command) || m.isSafeBin(command) {
+			if m.matchesAllowlist(ctx, command, fallbackAgentID) || m.isSafeBin(command) {
 				return "allow"
 			}
 			return "ask"
@@ -149,15 +171,22 @@ func (m *ExecApprovalManager) CheckCommand(command string) string {
 }
 
 // RequestApproval creates a pending approval and blocks until resolved or timeout.
-func (m *ExecApprovalManager) RequestApproval(command, agentID string, timeout time.Duration) (ApprovalDecision, error) {
+func (m *ExecApprovalManager) RequestApproval(ctx context.Context, command, fallbackAgentID string, timeout time.Duration) (ApprovalDecision, error) {
+	scope, err := approvalScopeFromContext(ctx, fallbackAgentID)
+	if err != nil {
+		return ApprovalDeny, err
+	}
+
 	m.mu.Lock()
 	m.nextID++
 	id := fmt.Sprintf("exec-%d", m.nextID)
 	pa := &PendingApproval{
 		ID:        id,
 		Command:   command,
-		AgentID:   agentID,
+		AgentID:   scope.agentID,
 		CreatedAt: time.Now(),
+		TenantID:  scope.tenantID,
+		UserID:    scope.userID,
 		resultCh:  make(chan ApprovalDecision, 1),
 	}
 	m.pending[id] = pa
@@ -177,7 +206,12 @@ func (m *ExecApprovalManager) RequestApproval(command, agentID string, timeout t
 			bin := extractBin(command)
 			if bin != "" {
 				m.mu.Lock()
-				m.alwaysAllow[bin] = true
+				m.alwaysAllow[approvalAllowKey{
+					tenantID: scope.tenantID,
+					userID:   scope.userID,
+					agentID:  scope.agentID,
+					binary:   bin,
+				}] = true
 				m.mu.Unlock()
 				slog.Info("exec approval: added to always-allow", "bin", bin)
 			}
@@ -193,43 +227,59 @@ func (m *ExecApprovalManager) RequestApproval(command, agentID string, timeout t
 	}
 }
 
-// Resolve resolves a pending approval request.
-func (m *ExecApprovalManager) Resolve(id string, decision ApprovalDecision) error {
+// ResolveForTenant resolves a pending approval request in tenantID.
+func (m *ExecApprovalManager) ResolveForTenant(tenantID uuid.UUID, id string, decision ApprovalDecision) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	pa, ok := m.pending[id]
-	if !ok {
-		return fmt.Errorf("approval %q not found or already resolved", id)
+	if !ok || tenantID == uuid.Nil || pa.TenantID != tenantID {
+		return ErrApprovalNotFound
 	}
 
+	// Remove it before notifying the requester so a concurrent resolver cannot
+	// report a second successful decision for the same approval.
+	delete(m.pending, id)
 	pa.resultCh <- decision
 	return nil
 }
 
-// ListPending returns all pending approval requests.
-func (m *ExecApprovalManager) ListPending() []*PendingApproval {
+// ListPendingForTenant returns only pending approvals owned by tenantID.
+func (m *ExecApprovalManager) ListPendingForTenant(tenantID uuid.UUID) []*PendingApproval {
+	if tenantID == uuid.Nil {
+		return nil
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	result := make([]*PendingApproval, 0, len(m.pending))
 	for _, pa := range m.pending {
-		result = append(result, pa)
+		if pa.TenantID == tenantID {
+			result = append(result, pa)
+		}
 	}
 	return result
 }
 
 // matchesAllowlist checks if a command matches any allowlist pattern or dynamic always-allow.
-func (m *ExecApprovalManager) matchesAllowlist(command string) bool {
+func (m *ExecApprovalManager) matchesAllowlist(ctx context.Context, command, fallbackAgentID string) bool {
 	bin := extractBin(command)
 
 	// Check dynamic always-allow
-	m.mu.Lock()
-	if m.alwaysAllow[bin] {
+	if scope, err := approvalScopeFromContext(ctx, fallbackAgentID); err == nil {
+		m.mu.Lock()
+		allowed := m.alwaysAllow[approvalAllowKey{
+			tenantID: scope.tenantID,
+			userID:   scope.userID,
+			agentID:  scope.agentID,
+			binary:   bin,
+		}]
 		m.mu.Unlock()
-		return true
+		if allowed {
+			return true
+		}
 	}
-	m.mu.Unlock()
 
 	// Check static allowlist patterns
 	for _, pattern := range m.config.Allowlist {
@@ -243,6 +293,30 @@ func (m *ExecApprovalManager) matchesAllowlist(command string) bool {
 	}
 
 	return false
+}
+
+type approvalScope struct {
+	tenantID uuid.UUID
+	userID   string
+	agentID  string
+}
+
+func approvalScopeFromContext(ctx context.Context, fallbackAgentID string) (approvalScope, error) {
+	tenantID := store.TenantIDFromContext(ctx)
+	userID := store.UserIDFromContext(ctx)
+	if tenantID == uuid.Nil || userID == "" {
+		return approvalScope{}, ErrApprovalScope
+	}
+
+	agentID := fallbackAgentID
+	if id := store.AgentIDFromContext(ctx); id != uuid.Nil {
+		agentID = id.String()
+	}
+	if agentID == "" {
+		return approvalScope{}, ErrApprovalScope
+	}
+
+	return approvalScope{tenantID: tenantID, userID: userID, agentID: agentID}, nil
 }
 
 // isSafeBin checks if the command's base binary is in the safe list.
