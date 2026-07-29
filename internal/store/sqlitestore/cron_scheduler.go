@@ -241,6 +241,9 @@ func (s *SQLiteCronStore) executeOneJob(job store.CronJob, handler func(job *sto
 
 	startTime := time.Now()
 
+	job.ExecutionID = uuid.New()
+	job.ExecutionStartedAt = startTime
+
 	var lastResult *store.CronJobResult
 	resultStr, attempts, err := cron.ExecuteWithRetry(func() (string, error) {
 		r, e := handler(&job)

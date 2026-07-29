@@ -11,6 +11,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/agent"
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
+	"github.com/nextlevelbuilder/goclaw/internal/outbounddelivery"
 	"github.com/nextlevelbuilder/goclaw/internal/scheduler"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
@@ -45,6 +46,7 @@ func TestCronJobHandlerInjectsPayloadCredentialUserID(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		outbounddelivery.DestinationSet{},
 	)
 
 	result, err := handler(&store.CronJob{
@@ -144,6 +146,7 @@ func TestCronJobHandlerSuppressesNoReplyDelivery(t *testing.T) {
 				nil,
 				nil,
 				nil,
+				outbounddelivery.DestinationSet{},
 			)
 
 			result, err := handler(&store.CronJob{
@@ -233,7 +236,7 @@ func TestCronJobHandler_StatelessResetsSession(t *testing.T) {
 			)
 			defer sched.Stop()
 
-			handler := makeCronJobHandler(sched, nil, &config.Config{}, nil, fakeStore, nil, nil, nil, nil)
+			handler := makeCronJobHandler(sched, nil, &config.Config{}, nil, fakeStore, nil, nil, nil, nil, outbounddelivery.DestinationSet{})
 
 			if _, err := handler(&store.CronJob{
 				ID:        uuid.NewString(),

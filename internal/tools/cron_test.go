@@ -6,11 +6,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nextlevelbuilder/goclaw/internal/gemsterinbox"
+	"github.com/nextlevelbuilder/goclaw/internal/outbounddelivery"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
+// cronToolWithInboxDestination mirrors the production wiring: a CronTool
+// whose destinations set contains the Gemster Inbox route.
+func cronToolWithInboxDestination(cronStore *testCronStore) *CronTool {
+	tool := NewCronTool(cronStore)
+	tool.SetDestinations(outbounddelivery.NewDestinationSet(
+		gemsterinbox.NewDestination(nopSender{}),
+	))
+	return tool
+}
+
+type nopSender struct{}
+
+func (nopSender) Send(_ context.Context, _ outbounddelivery.Delivery) error { return nil }
+
 type testCronStore struct {
 	jobs      map[string]*store.CronJob
+	addCnt    int
+	lastAdded *store.CronJob
 	updateCnt int
 	runCnt    int
 	lastForce bool
@@ -26,8 +44,22 @@ func newTestCronStore(job *store.CronJob) *testCronStore {
 	return &testCronStore{jobs: jobs}
 }
 
-func (s *testCronStore) AddJob(context.Context, string, store.CronSchedule, string, bool, string, string, string, string) (*store.CronJob, error) {
-	return nil, nil
+func (s *testCronStore) AddJob(_ context.Context, name string, schedule store.CronSchedule, message string, deliver bool, channel, to, agentID, userID string) (*store.CronJob, error) {
+	s.addCnt++
+	job := &store.CronJob{
+		ID:             "new-job",
+		Name:           name,
+		Schedule:       schedule,
+		Payload:        store.CronPayload{Message: message},
+		Deliver:        deliver,
+		DeliverChannel: channel,
+		DeliverTo:      to,
+		AgentID:        agentID,
+		UserID:         userID,
+	}
+	s.jobs[job.ID] = job
+	s.lastAdded = job
+	return job, nil
 }
 
 func (s *testCronStore) GetJob(_ context.Context, jobID string) (*store.CronJob, bool) {
@@ -75,6 +107,90 @@ func (s *testCronStore) RunJob(_ context.Context, _ string, force bool) (bool, s
 
 func (s *testCronStore) GetDueJobs(time.Time) []store.CronJob { return nil }
 func (s *testCronStore) SetDefaultTimezone(string)            {}
+
+func TestCronToolValidatesGemsterInboxBeforeCreatingJob(t *testing.T) {
+	cronStore := newTestCronStore(nil)
+	tool := cronToolWithInboxDestination(cronStore)
+	ctx := store.WithUserID(context.Background(), "not-an-email")
+
+	result := tool.Execute(ctx, map[string]any{
+		"action": "add",
+		"job": map[string]any{
+			"name":    "report",
+			"message": "send report",
+			"deliver": true,
+			"channel": gemsterinbox.Destination,
+			"schedule": map[string]any{
+				"kind":    "every",
+				"everyMs": float64(60_000),
+			},
+		},
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected invalid recipient error, got %#v", result)
+	}
+	if cronStore.addCnt != 0 {
+		t.Fatalf("AddJob called %d times; invalid Gemster Inbox job must not be persisted", cronStore.addCnt)
+	}
+}
+
+func TestCronToolKeepsExplicitGemsterInboxDestination(t *testing.T) {
+	cronStore := newTestCronStore(nil)
+	tool := cronToolWithInboxDestination(cronStore)
+	ctx := store.WithUserID(context.Background(), "user@example.com")
+	ctx = WithToolChannel(ctx, "ws")
+	ctx = WithToolChatID(ctx, "socket-1")
+
+	result := tool.Execute(ctx, map[string]any{
+		"action": "add",
+		"job": map[string]any{
+			"name":    "report",
+			"message": "send report",
+			"deliver": true,
+			"channel": gemsterinbox.Destination,
+			"schedule": map[string]any{
+				"kind":    "every",
+				"everyMs": float64(60_000),
+			},
+		},
+	})
+
+	if result.IsError {
+		t.Fatalf("add returned error: %#v", result)
+	}
+	if cronStore.lastAdded == nil || cronStore.lastAdded.DeliverChannel != gemsterinbox.Destination {
+		t.Fatalf("explicit Gemster Inbox destination was overwritten: %#v", cronStore.lastAdded)
+	}
+	if cronStore.lastAdded.DeliverTo != "user@example.com" {
+		t.Fatalf("recipient = %q, want user email", cronStore.lastAdded.DeliverTo)
+	}
+}
+
+func TestCronToolRejectsGemsterInboxOnGroupUpdate(t *testing.T) {
+	const groupUserID = "group:telegram:-100123"
+	cronStore := newTestCronStore(&store.CronJob{ID: "job-1", UserID: groupUserID})
+	tool := cronToolWithInboxDestination(cronStore)
+	ctx := store.WithUserID(context.Background(), groupUserID)
+	ctx = WithToolPeerKind(ctx, "group")
+	deliver := true
+
+	result := tool.Execute(ctx, map[string]any{
+		"action": "update",
+		"jobId":  "job-1",
+		"patch": map[string]any{
+			"deliver":        deliver,
+			"deliverChannel": gemsterinbox.Destination,
+		},
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected direct-user validation error, got %#v", result)
+	}
+	if cronStore.updateCnt != 0 {
+		t.Fatalf("UpdateJob called %d times for invalid group target", cronStore.updateCnt)
+	}
+}
 
 func TestCronToolBlocksCredentialBoundUpdateByDifferentUser(t *testing.T) {
 	cronStore := newTestCronStore(&store.CronJob{

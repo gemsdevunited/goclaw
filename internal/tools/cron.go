@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nextlevelbuilder/goclaw/internal/outbounddelivery"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
@@ -14,13 +15,20 @@ import (
 // Matching OpenClaw src/agents/tools/cron-tool.ts.
 type CronTool struct {
 	cronStore      store.CronStore
-	permStore      store.ConfigPermissionStore // nil = no group restriction
-	providerStore  store.ProviderStore         // nil = provider override by name unavailable
-	commandEnabled bool                        // allow deterministic command payloads (mirrors cron.command_enabled)
+	permStore      store.ConfigPermissionStore  // nil = no group restriction
+	providerStore  store.ProviderStore          // nil = provider override by name unavailable
+	commandEnabled bool                         // allow deterministic command payloads (mirrors cron.command_enabled)
+	destinations   outbounddelivery.DestinationSet // registered outbound destinations (recipient validation lives here)
 }
 
 func NewCronTool(cronStore store.CronStore) *CronTool {
 	return &CronTool{cronStore: cronStore}
+}
+
+// SetDestinations registers outbound destinations whose RecipientResolver
+// is consulted when a cron job's deliver/channel points at one of them.
+func (t *CronTool) SetDestinations(d outbounddelivery.DestinationSet) {
+	t.destinations = d
 }
 
 // SetConfigPermStore enables group cron mutation restriction.
@@ -314,10 +322,10 @@ func (t *CronTool) handleAdd(ctx context.Context, args map[string]any, agentID, 
 		}
 	}
 
-	// Auto-fill channel and to from context when deliver is requested.
-	// Always prefer context values over LLM-provided values to prevent
-	// misrouted deliveries (e.g. LLM confusing guild ID with channel ID).
-	if deliver {
+	// Preserve an explicitly selected outbound destination. Registered destinations
+	// (e.g. Gemster Inbox) own their own recipient format; existing chat
+	// destinations continue to use the trusted channel/chat context.
+	if deliver && !t.destinations.Has(channel) {
 		if ctxChannel := ToolChannelFromCtx(ctx); ctxChannel != "" {
 			channel = ctxChannel
 		}
@@ -337,6 +345,16 @@ func (t *CronTool) handleAdd(ctx context.Context, args map[string]any, agentID, 
 		return errR
 	}
 	modelOverride, _ := jobObj["model"].(string)
+
+	if deliver {
+		if dest, ok := t.destinations.Get(channel); ok && dest.Resolver != nil {
+			recipient, err := dest.Resolver.ResolveRecipient(userID, ToolPeerKindFromCtx(ctx))
+			if err != nil {
+				return ErrorResult(err.Error())
+			}
+			to = recipient
+		}
+	}
 
 	job, err := t.cronStore.AddJob(ctx, name, schedule, message, deliver, channel, to, agentID, userID)
 	if err != nil {
@@ -448,6 +466,26 @@ func (t *CronTool) handleUpdate(ctx context.Context, args map[string]any, agentI
 	if patch.Schedule != nil && patch.Schedule.Kind == "at" && patch.Schedule.AtMS != nil {
 		if *patch.Schedule.AtMS <= time.Now().UnixMilli() {
 			return ErrorResult(fmt.Sprintf("schedule.atMs is in the past (%d). Use the datetime tool to get current time, then set a future timestamp. Current time is %d ms", *patch.Schedule.AtMS, time.Now().UnixMilli()))
+		}
+	}
+
+	if patch.Deliver != nil || patch.DeliverChannel != nil {
+		deliver := existing.Deliver
+		if patch.Deliver != nil {
+			deliver = *patch.Deliver
+		}
+		channel := existing.DeliverChannel
+		if patch.DeliverChannel != nil {
+			channel = *patch.DeliverChannel
+		}
+		if deliver {
+			if dest, ok := t.destinations.Get(channel); ok && dest.Resolver != nil {
+				recipient, err := dest.Resolver.ResolveRecipient(userID, ToolPeerKindFromCtx(ctx))
+				if err != nil {
+					return ErrorResult(err.Error())
+				}
+				patch.DeliverTo = &recipient
+			}
 		}
 	}
 

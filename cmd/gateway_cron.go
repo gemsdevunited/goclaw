@@ -14,6 +14,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/channels"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/cronexec"
+	"github.com/nextlevelbuilder/goclaw/internal/outbounddelivery"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/scheduler"
 	"github.com/nextlevelbuilder/goclaw/internal/sessions"
@@ -54,8 +55,21 @@ func cronTenantContext(ctx context.Context, tenantStore store.TenantStore, tenan
 	return store.WithTenantSlug(ctx, tenant.Slug)
 }
 
-func makeCronJobHandler(sched *scheduler.Scheduler, msgBus *bus.MessageBus, cfg *config.Config, channelMgr *channels.Manager, sessionMgr store.SessionStore, agentStore store.AgentStore, tenantStore store.TenantStore, providerStore store.ProviderStore, providerReg *providers.Registry) func(job *store.CronJob) (*store.CronJobResult, error) {
+func makeCronJobHandler(sched *scheduler.Scheduler, msgBus *bus.MessageBus, cfg *config.Config, channelMgr *channels.Manager, sessionMgr store.SessionStore, agentStore store.AgentStore, tenantStore store.TenantStore, providerStore store.ProviderStore, providerReg *providers.Registry, destinations outbounddelivery.DestinationSet) func(job *store.CronJob) (*store.CronJobResult, error) {
 	return func(job *store.CronJob) (*store.CronJobResult, error) {
+		executionID := job.ExecutionID
+		if executionID == uuid.Nil {
+			executionID = uuid.New()
+			job.ExecutionID = executionID
+		}
+		if job.ExecutionStartedAt.IsZero() {
+			job.ExecutionStartedAt = time.Now()
+		}
+		if job.Deliver {
+			if dest, ok := destinations.Get(job.DeliverChannel); ok && dest.Sender == nil {
+				return nil, fmt.Errorf("%s delivery is not configured", job.DeliverChannel)
+			}
+		}
 		agentID := job.AgentID
 		if agentID == "" && agentStore != nil {
 			// Resolve real default agent from DB instead of using literal "default" string.
@@ -94,7 +108,7 @@ func makeCronJobHandler(sched *scheduler.Scheduler, msgBus *bus.MessageBus, cfg 
 		// Deterministic command payload: run the shell command in-process WITHOUT
 		// an LLM/agent turn (zero model tokens). Gated by cron.command_enabled.
 		if job.Payload.IsCommand() {
-			return runCommandCronJob(cfg, job, tenantStore, msgBus, peerKind)
+			return runCommandCronJob(cfg, job, tenantStore, msgBus, peerKind, executionID, destinations)
 		}
 
 		// Build cron context so the agent knows delivery target and requester.
@@ -164,7 +178,7 @@ func makeCronJobHandler(sched *scheduler.Scheduler, msgBus *bus.MessageBus, cfg 
 
 		}
 
-		// Schedule through cron lane — scheduler handles agent resolution and concurrency
+		// Schedule through cron lane — scheduler handles agent resolution and concurrency.
 		outCh := sched.Schedule(cronCtx, scheduler.LaneCron, agent.RunRequest{
 			SessionKey:        sessionKey,
 			Message:           job.Payload.Message,
@@ -195,8 +209,11 @@ func makeCronJobHandler(sched *scheduler.Scheduler, msgBus *bus.MessageBus, cfg 
 
 		result := outcome.Result
 
-		// If job wants delivery to a channel, send the agent response to the target chat.
-		deliverCronOutput(msgBus, job, result.Content, result.Media, peerKind)
+		// Registered destinations (e.g. Gemster Inbox) use their signed sender;
+		// existing chat channels stay on the message bus.
+		if !destinations.Has(job.DeliverChannel) {
+			deliverCronOutput(msgBus, job, result.Content, result.Media, peerKind)
+		}
 
 		cronResult := &store.CronJobResult{
 			Content: result.Content,
@@ -204,6 +221,10 @@ func makeCronJobHandler(sched *scheduler.Scheduler, msgBus *bus.MessageBus, cfg 
 		if result.Usage != nil {
 			cronResult.InputTokens = result.Usage.PromptTokens
 			cronResult.OutputTokens = result.Usage.CompletionTokens
+		}
+
+		if err := sendDestinationDelivery(cronCtx, job, executionID, result.Content, destinations); err != nil {
+			return cronResult, err
 		}
 
 		// wakeMode: trigger heartbeat after cron job completes.
@@ -254,7 +275,7 @@ func deliverCronOutput(msgBus *bus.MessageBus, job *store.CronJob, content strin
 // stderr) like an agent turn. On failure it returns an error so the run is
 // recorded as "error" and retried per cron.max_retries — failures are NOT
 // delivered, mirroring the agent path where only successful output is announced.
-func runCommandCronJob(cfg *config.Config, job *store.CronJob, tenantStore store.TenantStore, msgBus *bus.MessageBus, peerKind string) (*store.CronJobResult, error) {
+func runCommandCronJob(cfg *config.Config, job *store.CronJob, tenantStore store.TenantStore, msgBus *bus.MessageBus, peerKind string, executionID uuid.UUID, destinations outbounddelivery.DestinationSet) (*store.CronJobResult, error) {
 	if !cfg.Cron.CommandEnabled {
 		return nil, fmt.Errorf("cron command payloads are disabled; set cron.command_enabled=true to allow them")
 	}
@@ -284,8 +305,12 @@ func runCommandCronJob(cfg *config.Config, job *store.CronJob, tenantStore store
 		return nil, res.Err
 	}
 
+	result := &store.CronJobResult{Content: res.Summary}
+	if destinations.Has(job.DeliverChannel) {
+		return result, sendDestinationDelivery(ctx, job, executionID, res.Summary, destinations)
+	}
 	deliverCronOutput(msgBus, job, res.Summary, nil, peerKind)
-	return &store.CronJobResult{Content: res.Summary}, nil
+	return result, nil
 }
 
 func cronOutputContainsNoReplySentinel(content string) bool {
@@ -299,4 +324,50 @@ func resolveCronPeerKind(job *store.CronJob) string {
 		return "group"
 	}
 	return ""
+}
+
+// firstLineAsTitle extracts a short title from a free-form agent body.
+// The receiver enforces a 200-char cap.
+func firstLineAsTitle(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "(empty)"
+	}
+	if i := strings.IndexAny(body, "\r\n"); i >= 0 {
+		body = body[:i]
+	}
+	runes := []rune(body)
+	if len(runes) > 200 {
+		body = string(runes[:200])
+	}
+	return body
+}
+
+func sendDestinationDelivery(ctx context.Context, job *store.CronJob, executionID uuid.UUID, body string, destinations outbounddelivery.DestinationSet) error {
+	if !job.Deliver {
+		return nil
+	}
+	dest, ok := destinations.Get(job.DeliverChannel)
+	if !ok {
+		return nil
+	}
+	if cronOutputContainsNoReplySentinel(body) {
+		slog.Info("cron: suppressed destination delivery (NO_REPLY)",
+			"job_id", job.ID, "destination", dest.Name, "execution_id", executionID)
+		return nil
+	}
+	if dest.Sender == nil {
+		return fmt.Errorf("%s delivery is not configured", dest.Name)
+	}
+	title := firstLineAsTitle(body)
+	return dest.Sender.Send(ctx, outbounddelivery.Delivery{
+		ID:         executionID.String(),
+		TenantID:   job.TenantID,
+		Recipient:  job.UserID,
+		SourceKind: outbounddelivery.SourceCron,
+		SourceID:   executionID.String(),
+		Title:      title,
+		Body:       body,
+		CreatedAt:  job.ExecutionStartedAt,
+	})
 }

@@ -46,6 +46,9 @@ type CronJob struct {
 	WakeHeartbeat  bool         `json:"wakeHeartbeat" db:"wake_heartbeat"`
 	ProviderID     *uuid.UUID   `json:"providerId,omitempty" db:"provider_id"`
 	Model          *string      `json:"model,omitempty" db:"model"`
+	// Transient run identity used by external idempotent deliveries.
+	ExecutionID        uuid.UUID `json:"-" db:"-"`
+	ExecutionStartedAt time.Time `json:"-" db:"-"`
 }
 
 // CronSchedule defines when a job should run.

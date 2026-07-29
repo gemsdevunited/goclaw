@@ -256,6 +256,40 @@ Via the agent `cron` tool (`action: "add"`), set `command` (a shell string) or `
 
 ---
 
+## 7. Gemster Inbox Delivery
+
+Set `deliver=true` and `channel="gemster_inbox"` to deliver a cron
+result to the current Gemster user's Gemster Inbox. This destination is
+explicit, direct-user only, and requires an email-shaped user ID.
+Existing Telegram/Zalo/WS delivery behavior is unchanged.
+
+Cron core is adapter-agnostic. The composition root
+(`cmd/gateway_heartbeat.go`) builds an `outbounddelivery.DestinationSet`
+at boot by wrapping the configured sender in
+`gemsterinbox.NewDestination(...)`. Cron core looks up the destination
+by `job.DeliverChannel` and dispatches through its `Sender`. The
+adapter also supplies a `RecipientResolver` that cron tool uses to
+validate the email-shaped user ID and reject group context before the
+job is persisted.
+
+After a successful agent or command result, GoClaw sends one signed
+message through the generic `outbounddelivery.Sender` port and the
+Gemster Inbox adapter. The cron execution ID
+is the delivery idempotency key and remains stable across cron handler
+retries; Gemster deduplicates an exact replay.
+
+The sender signs and posts to
+`/internal/goclaw/gemster-inbox/deliveries`. It is disabled by default and
+configured with `GEMSTER_INBOX_DELIVERY_ENABLED`,
+`GEMSTER_INBOX_DELIVERY_ENDPOINT`,
+`GEMSTER_INBOX_DELIVERY_HMAC_KEY_ID`, and
+`GEMSTER_INBOX_HMAC_KEYS_JSON`.
+
+Delivery is synchronous: transport/non-2xx failures use the existing
+cron retry policy. GoClaw does not maintain a second inbox queue.
+
+---
+
 ## File Reference
 
 | Module | Path | Purpose |
@@ -264,7 +298,9 @@ Via the agent `cron` tool (`action: "add"`), set `command` (a shell string) or `
 | Cron service | `internal/cron/` | In-memory run loop (1s tick), job CRUD, retry with backoff, schedule parsing, types |
 | Command runner | `internal/cronexec/` | Deterministic command-payload execution (timeout, no-output watchdog, output cap, process-group kill) |
 | Cron store | `internal/store/pg/cron*.go`, `internal/store/cron_store.go` | CronStore interface + PostgreSQL persistence (create, list, update, delete, execution, scanning) |
-| Gateway wiring | `cmd/gateway_cron.go`, `internal/gateway/methods/cron.go` | Scheduler lane routing, RPC handlers (list, create, update, delete, toggle, run, runs) |
+| Outbound delivery port | `internal/outbounddelivery/` | Neutral delivery contract + Destination/Set/RecipientResolver used by external destination adapters |
+| Gemster Inbox sender | `internal/gemsterinbox/` | Gemster-specific signed delivery adapter; supplies NewDestination(...) for composition-root wiring; cron is the first producer |
+| Gateway wiring | `cmd/gateway_cron.go`, `cmd/gateway_heartbeat.go`, `internal/gateway/methods/cron.go` | Scheduler lane routing, DestinationSet wiring, RPC handlers (list, create, update, delete, toggle, run, runs) |
 
 Use `grep` or your editor's symbol search for specific files.
 

@@ -7,12 +7,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nextlevelbuilder/goclaw/internal/agent"
+	"github.com/nextlevelbuilder/goclaw/internal/gemsterinbox"
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/channels"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway/methods"
 	"github.com/nextlevelbuilder/goclaw/internal/heartbeat"
+	"github.com/nextlevelbuilder/goclaw/internal/outbounddelivery"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/scheduler"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
@@ -49,8 +51,20 @@ func startCronAndHeartbeat(
 	heartbeatTool *tools.HeartbeatTool,
 	heartbeatMethods *methods.HeartbeatMethods,
 ) *heartbeat.Ticker {
-	// Start cron service with job handler (routes through scheduler's cron lane)
-	pgStores.Cron.SetOnJob(makeCronJobHandler(sched, msgBus, cfg, channelMgr, pgStores.Sessions, pgStores.Agents, pgStores.Tenants, pgStores.Providers, providerRegistry))
+	// Start cron service with job handler (routes through scheduler's cron lane).
+	// The composition root owns adapter wiring; cron core receives a generic
+	// DestinationSet keyed by destination name (e.g. "gemster_inbox").
+	gemsterSender, err := gemsterinbox.NewFromEnv()
+	if err != nil {
+		slog.Warn("gemster inbox delivery is not configured", "error", err)
+	}
+	var destinations outbounddelivery.DestinationSet
+	if gemsterSender != nil {
+		destinations = outbounddelivery.NewDestinationSet(
+			gemsterinbox.NewDestination(gemsterSender),
+		)
+	}
+	pgStores.Cron.SetOnJob(makeCronJobHandler(sched, msgBus, cfg, channelMgr, pgStores.Sessions, pgStores.Agents, pgStores.Tenants, pgStores.Providers, providerRegistry, destinations))
 	wireCronEvents(pgStores.Cron, msgBus)
 	if err := pgStores.Cron.Start(); err != nil {
 		slog.Warn("cron service failed to start", "error", err)

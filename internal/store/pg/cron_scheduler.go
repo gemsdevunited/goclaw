@@ -240,8 +240,11 @@ func (s *PGCronStore) executeOneJob(job store.CronJob, handler func(job *store.C
 	}
 
 	startTime := time.Now()
+	job.ExecutionID = uuid.New()
+	job.ExecutionStartedAt = startTime
 
-	// Wrap handler to fit ExecuteWithRetry's (string, error) signature
+	// Wrap handler to fit ExecuteWithRetry's (string, error) signature.
+	// ExecutionID stays stable when sending the Agent Inbox message is retried.
 	var lastResult *store.CronJobResult
 	resultStr, attempts, err := cron.ExecuteWithRetry(func() (string, error) {
 		r, e := handler(&job)
