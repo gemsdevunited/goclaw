@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nextlevelbuilder/goclaw/internal/agent"
-	"github.com/nextlevelbuilder/goclaw/internal/gemsterinbox"
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/channels"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
@@ -50,20 +49,13 @@ func startCronAndHeartbeat(
 	cfg *config.Config,
 	heartbeatTool *tools.HeartbeatTool,
 	heartbeatMethods *methods.HeartbeatMethods,
+	destinations outbounddelivery.DestinationSet,
 ) *heartbeat.Ticker {
 	// Start cron service with job handler (routes through scheduler's cron lane).
-	// The composition root owns adapter wiring; cron core receives a generic
-	// DestinationSet keyed by destination name (e.g. "gemster_inbox").
-	gemsterSender, err := gemsterinbox.NewFromEnv()
-	if err != nil {
-		slog.Warn("gemster inbox delivery is not configured", "error", err)
-	}
-	var destinations outbounddelivery.DestinationSet
-	if gemsterSender != nil {
-		destinations = outbounddelivery.NewDestinationSet(
-			gemsterinbox.NewDestination(gemsterSender),
-		)
-	}
+	// destinations is built once at the composition root (cmd/gateway.go) and
+	// contains gemster_inbox even when its sender is nil — the handler then
+	// returns "<name> delivery is not configured" instead of silently falling
+	// back to the legacy chat bus.
 	pgStores.Cron.SetOnJob(makeCronJobHandler(sched, msgBus, cfg, channelMgr, pgStores.Sessions, pgStores.Agents, pgStores.Tenants, pgStores.Providers, providerRegistry, destinations))
 	wireCronEvents(pgStores.Cron, msgBus)
 	if err := pgStores.Cron.Start(); err != nil {

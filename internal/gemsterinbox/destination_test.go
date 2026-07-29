@@ -41,6 +41,33 @@ func TestNewDestination_ResolverRejectsGroupAndInvalidEmail(t *testing.T) {
 	}
 }
 
+// NewDestination(nil) must still produce a destination that registers in a set.
+// The composition root builds the set before knowing whether the env config
+// resolves to a sender; if it doesn't, the cron handler must see the registered
+// name and report "<name> delivery is not configured" instead of silently
+// falling back to the legacy chat bus.
+func TestNewDestination_NilSenderStaysRegisteredInSet(t *testing.T) {
+	d := NewDestination(nil)
+	if d.Name != Destination {
+		t.Fatalf("Name = %q, want %q", d.Name, Destination)
+	}
+	if d.Sender != nil {
+		t.Fatalf("Sender = %v, want nil to preserve configured-but-unconfigured state", d.Sender)
+	}
+	if d.Resolver == nil {
+		t.Fatal("Resolver must remain wired even when Sender is nil")
+	}
+
+	set := outbounddelivery.NewDestinationSet(d)
+	if !set.Has(Destination) {
+		t.Fatalf("set must contain %q even when Sender is nil", Destination)
+	}
+	got, ok := set.Get(Destination)
+	if !ok || got.Sender != nil {
+		t.Fatalf("Get returned (%+v, %v); want registered entry with nil Sender", got, ok)
+	}
+}
+
 // fakeInboxSender is the minimum outbounddelivery.Sender implementation needed
 // by these tests; it does not exercise wire signing.
 type fakeInboxSender struct{}

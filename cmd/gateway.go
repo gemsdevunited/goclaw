@@ -36,6 +36,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/edition"
 	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway"
+	"github.com/nextlevelbuilder/goclaw/internal/gemsterinbox"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway/methods"
 	"github.com/nextlevelbuilder/goclaw/internal/hooks"
 	httpapi "github.com/nextlevelbuilder/goclaw/internal/http"
@@ -43,6 +44,7 @@ import (
 	mcpbridge "github.com/nextlevelbuilder/goclaw/internal/mcp"
 	mcpoauth "github.com/nextlevelbuilder/goclaw/internal/mcp/oauth"
 	"github.com/nextlevelbuilder/goclaw/internal/media"
+	"github.com/nextlevelbuilder/goclaw/internal/outbounddelivery"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/scheduler"
 	"github.com/nextlevelbuilder/goclaw/internal/security"
@@ -468,8 +470,21 @@ func runGateway() {
 	skillsLoader, skillSearchTool, globalSkillsDir, bundledSkillsDir, builtinSkillsDir := setupSkillsSystem(cfg, workspace, dataDir, pgStores, toolsReg, providerRegistry, msgBus)
 	_ = skillSearchTool // used via wireExtras → skillsLoader; kept for type clarity
 
+	// Build the outbound destinations once at the composition root. Always
+	// register gemster_inbox even when its sender is nil — that's the
+	// "registered but not configured" semantic, so handler/tools can report
+	// "<name> delivery is not configured" instead of silently falling back to
+	// the legacy chat bus.
+	gemsterSender, err := gemsterinbox.NewFromEnv()
+	if err != nil {
+		slog.Warn("gemster inbox delivery is not configured", "error", err)
+	}
+	destinations := outbounddelivery.NewDestinationSet(
+		gemsterinbox.NewDestination(gemsterSender),
+	)
+
 	// Register cron/heartbeat/session/message tools, aliases, allow-paths, store wiring.
-	heartbeatTool, hasMemory := wireExtraTools(pgStores, toolsReg, msgBus, workspace, dataDir, agentCfg, globalSkillsDir, builtinSkillsDir, cfg.Cron.CommandEnabled)
+	heartbeatTool, hasMemory := wireExtraTools(pgStores, toolsReg, msgBus, workspace, dataDir, agentCfg, globalSkillsDir, builtinSkillsDir, cfg.Cron.CommandEnabled, destinations)
 
 	// Register workstation_exec + claude_remote tools (Standard edition only; deny-all until Phase 6).
 	// cleanupWorkstation stops the activity sink retention goroutine and drains the write buffer.
@@ -881,7 +896,7 @@ func runGateway() {
 	defer sched.Stop()
 
 	// Start cron + heartbeat ticker, wire wake functions and adaptive throttle.
-	heartbeatTicker := startCronAndHeartbeat(pgStores, server, sched, msgBus, providerRegistry, channelMgr, cfg, heartbeatTool, heartbeatMethods)
+	heartbeatTicker := startCronAndHeartbeat(pgStores, server, sched, msgBus, providerRegistry, channelMgr, cfg, heartbeatTool, heartbeatMethods, destinations)
 
 	// Subscribe to agent events for channel streaming/reaction forwarding.
 	deps.wireChannelStreamingSubscriber()

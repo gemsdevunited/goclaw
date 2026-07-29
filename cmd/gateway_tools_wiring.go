@@ -14,6 +14,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/edition"
 	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
+	"github.com/nextlevelbuilder/goclaw/internal/outbounddelivery"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/internal/workstation"
@@ -33,6 +34,7 @@ func wireExtraTools(
 	globalSkillsDir string,
 	builtinSkillsDir string,
 	cronCommandEnabled bool,
+	destinations outbounddelivery.DestinationSet,
 ) (heartbeatTool *tools.HeartbeatTool, hasMemory bool) {
 	// web_search: tenant-scoped resolve requires stores + msgBus — register here.
 	toolsReg.Register(tools.NewWebSearchTool(pgStores.ConfigSecrets, msgBus))
@@ -46,6 +48,7 @@ func wireExtraTools(
 	cronTool := tools.NewCronTool(pgStores.Cron)
 	cronTool.SetProviderStore(pgStores.Providers)
 	cronTool.SetCommandEnabled(cronCommandEnabled)
+	cronTool.SetDestinations(destinations)
 	toolsReg.Register(cronTool)
 	slog.Info("cron tool registered")
 
