@@ -69,6 +69,8 @@ const (
 	MethodChannelsStatus = "channels.status"
 	MethodChannelsToggle = "channels.toggle"
 
+	MethodOutboundDestinationsList = "outbound.destinations.list"
+
 	MethodPairingRequest = "device.pair.request"
 	MethodPairingApprove = "device.pair.approve"
 	MethodPairingDeny    = "device.pair.deny"

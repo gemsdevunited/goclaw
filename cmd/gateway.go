@@ -832,6 +832,10 @@ func runGateway() {
 	// Register channels/instances/links/teams RPC methods
 	chInstancesM := wireChannelRPCMethods(server, pgStores, channelMgr, instanceLoader, agentRouter, msgBus, cfg, workspace)
 
+	// Register outbound destinations RPC method (single source of truth for
+	// what channels the cron tool/UI can deliver to).
+	methods.NewDestinationsMethods(destinations).Register(server.Router())
+
 	// Bitrix24 orphan-bot cleaner. Fires from channel_instances delete handler
 	// when the channel is no longer loaded in the Manager (typical scenario:
 	// admin disabled the channel earlier so InstanceLoader.Reload removed it).

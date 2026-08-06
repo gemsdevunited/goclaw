@@ -414,6 +414,9 @@ func isReadMethod(method string) bool {
 		protocol.MethodChannelInstancesList,
 		protocol.MethodChannelInstancesGet,
 
+		// Outbound delivery destinations read
+		protocol.MethodOutboundDestinationsList,
+
 		// Bitrix24 portal read — any tenant member can list portals to populate
 		// the channel-form dropdown; get_install_url is needed to resume a
 		// half-finished authorize flow.

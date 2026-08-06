@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nextlevelbuilder/goclaw/internal/gemsterinbox"
 	"github.com/nextlevelbuilder/goclaw/internal/outbounddelivery"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
@@ -15,9 +18,9 @@ import (
 // Matching OpenClaw src/agents/tools/cron-tool.ts.
 type CronTool struct {
 	cronStore      store.CronStore
-	permStore      store.ConfigPermissionStore  // nil = no group restriction
-	providerStore  store.ProviderStore          // nil = provider override by name unavailable
-	commandEnabled bool                         // allow deterministic command payloads (mirrors cron.command_enabled)
+	permStore      store.ConfigPermissionStore     // nil = no group restriction
+	providerStore  store.ProviderStore             // nil = provider override by name unavailable
+	commandEnabled bool                            // allow deterministic command payloads (mirrors cron.command_enabled)
 	destinations   outbounddelivery.DestinationSet // registered outbound destinations (recipient validation lives here)
 }
 
@@ -49,8 +52,11 @@ func (t *CronTool) SetCommandEnabled(enabled bool) {
 
 func (t *CronTool) Name() string { return "cron" }
 
-func (t *CronTool) Description() string {
-	return `Manage Gateway cron jobs.
+// cronToolBaseDescription is the static schema and rules block. The destinations
+// block is appended at call time so newly registered destinations show up
+// without a recompile. Keep this byte-identical across changes — the LLM
+// has cached the schema.
+const cronToolBaseDescription = `Manage Gateway cron jobs.
 Always send a JSON object with an "action" field.
 
 VALID ACTIONS AND EXACT PAYLOAD SHAPES:
@@ -128,6 +134,38 @@ DETERMINISTIC COMMAND JOBS (no LLM, zero tokens):
   has cron.command_enabled=true; otherwise add returns an error.
 - Use for scheduled probes/scripts that don't need the model. Output is delivered
   like a normal job when "deliver" is set; a non-zero exit records the run as an error.`
+
+// destinationDescriptions pairs each registered destination name with a
+// one-line operator hint. The agent reads this so it can pick a "channel"
+// value that actually delivers somewhere. New destinations add an entry here
+// — no cron-tool schema change required.
+var destinationDescriptions = map[string]string{
+	gemsterinbox.Destination: "Deliver into the recipient's Gemie Inbox (GemSFastify user inbox).",
+}
+
+func (t *CronTool) Description() string {
+	base := cronToolBaseDescription
+	names := t.destinations.Names()
+	if len(names) == 0 {
+		return base
+	}
+	// Stable order so the description hash is reproducible across boots.
+	sort.Strings(names)
+	var sb strings.Builder
+	sb.WriteString(base)
+	sb.WriteString("\n\nDELIVERY DESTINATIONS:\n")
+	for _, name := range names {
+		desc, ok := destinationDescriptions[name]
+		if !ok {
+			desc = "(no description registered)"
+		}
+		if t.destinations.Configured(name) {
+			sb.WriteString(fmt.Sprintf("- %s: %s\n", name, desc))
+		} else {
+			sb.WriteString(fmt.Sprintf("- %s: %s (NOT CONFIGURED — adapter sender is not wired up; check env vars)\n", name, desc))
+		}
+	}
+	return sb.String()
 }
 
 func (t *CronTool) Parameters() map[string]any {

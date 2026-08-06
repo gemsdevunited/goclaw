@@ -111,3 +111,26 @@ func TestRecipientResolverFunc_Adapter(t *testing.T) {
 		t.Fatalf("got = %q, err = %v", got, err)
 	}
 }
+
+func TestDestinationSet_Configured(t *testing.T) {
+	// Unknown name is not configured.
+	var empty DestinationSet
+	if empty.Configured("anything") {
+		t.Fatal("empty set must report Configured=false for unknown names")
+	}
+
+	// Registered-but-not-configured (nil Sender) reports false.
+	registered := NewDestinationSet(Destination{Name: "gemster_inbox", Sender: nil})
+	if !registered.Has("gemster_inbox") {
+		t.Fatal("nil-sender destination must remain registered")
+	}
+	if registered.Configured("gemster_inbox") {
+		t.Fatal("nil-sender destination must report Configured=false")
+	}
+
+	// Registered-with-sender reports true.
+	wired := NewDestinationSet(Destination{Name: "gemster_inbox", Sender: &fakeSender{}})
+	if !wired.Configured("gemster_inbox") {
+		t.Fatal("wired destination must report Configured=true")
+	}
+}

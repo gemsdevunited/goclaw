@@ -146,8 +146,8 @@ func TestCanAccess_WriteMethods(t *testing.T) {
 
 func TestCanAccess_ReadMethods_AnyRole(t *testing.T) {
 	pe := NewPolicyEngine(nil)
-	// A method not in admin or write lists → defaults to viewer
-	readMethod := "sessions.list" // not in admin/write lists
+	// A read-only RPC explicitly classified in the viewer allowlist.
+	readMethod := protocol.MethodOutboundDestinationsList
 	for _, role := range []Role{RoleViewer, RoleOperator, RoleAdmin, RoleOwner} {
 		if !pe.CanAccess(role, readMethod) {
 			t.Fatalf("%s should access read method %s", role, readMethod)

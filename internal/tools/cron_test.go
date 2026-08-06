@@ -309,3 +309,49 @@ func TestCronToolUpdateRejectsInvalidCommandSpec(t *testing.T) {
 		t.Fatalf("UpdateJob called %d times, want 0", cronStore.updateCnt)
 	}
 }
+
+// Description() is the LLM-facing schema. It MUST list every registered
+// outbound destination so the agent can pick a "channel" that actually
+// delivers somewhere — and it MUST mark a nil-sender destination as not
+// configured so the agent does not pick it accidentally.
+func TestCronToolDescriptionListsRegisteredDestinations(t *testing.T) {
+	tool := cronToolWithInboxDestination(newTestCronStore(nil))
+	desc := tool.Description()
+
+	if !strings.Contains(desc, "DELIVERY DESTINATIONS:") {
+		t.Fatalf("description missing destinations block:\n%s", desc)
+	}
+	if !strings.Contains(desc, gemsterinbox.Destination) {
+		t.Fatalf("description missing gemster_inbox entry:\n%s", desc)
+	}
+	if strings.Contains(desc, "NOT CONFIGURED") {
+		t.Fatalf("description marks gemster_inbox as NOT CONFIGURED even though a sender is wired:\n%s", desc)
+	}
+}
+
+func TestCronToolDescriptionMarksUnconfiguredDestination(t *testing.T) {
+	tool := NewCronTool(newTestCronStore(nil))
+	// Register gemster_inbox with a nil sender — same shape as a gateway booted
+	// without GEMSTER_INBOX_* env vars.
+	tool.SetDestinations(outbounddelivery.NewDestinationSet(
+		gemsterinbox.NewDestination(nil),
+	))
+	desc := tool.Description()
+
+	if !strings.Contains(desc, gemsterinbox.Destination) {
+		t.Fatalf("description missing gemster_inbox entry:\n%s", desc)
+	}
+	if !strings.Contains(desc, "NOT CONFIGURED") {
+		t.Fatalf("description must flag nil-sender destination as NOT CONFIGURED:\n%s", desc)
+	}
+}
+
+func TestCronToolDescriptionNoDestinationsBlockWhenEmpty(t *testing.T) {
+	tool := NewCronTool(newTestCronStore(nil))
+	// Default tool has no destinations set.
+	desc := tool.Description()
+
+	if strings.Contains(desc, "DELIVERY DESTINATIONS:") {
+		t.Fatalf("description must omit destinations block when none are registered:\n%s", desc)
+	}
+}

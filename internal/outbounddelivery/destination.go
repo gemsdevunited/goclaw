@@ -73,6 +73,18 @@ func (s DestinationSet) Names() []string {
 	return out
 }
 
+// Configured reports whether the named destination is registered AND has a
+// non-nil Sender. A destination registered with a nil Sender is "registered
+// but not configured" — the name still appears in Names()/Has() so tools and
+// operators can surface it as unavailable.
+func (s DestinationSet) Configured(name string) bool {
+	d, ok := s.Get(name)
+	if !ok {
+		return false
+	}
+	return d.Sender != nil
+}
+
 // RecipientResolverFunc adapts a plain function to the RecipientResolver
 // interface so adapters can supply a resolver without declaring a type.
 type RecipientResolverFunc func(userID, peerKind string) (string, error)
