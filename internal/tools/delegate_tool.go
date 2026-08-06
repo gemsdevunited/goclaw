@@ -28,7 +28,7 @@ type DelegateRunFunc func(ctx context.Context, req DelegateRequest) (DelegateRes
 
 // DelegateRequest describes a delegation dispatch.
 type DelegateRequest struct {
-	FromAgentID uuid.UUID
+	FromAgentID  uuid.UUID
 	FromAgentKey string
 	ToAgentKey   string
 	Task         string
@@ -342,4 +342,3 @@ func (t *DelegateTool) emitEvent(ctx context.Context, eventType eventbus.EventTy
 		Payload:   payload,
 	})
 }
-
