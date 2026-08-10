@@ -212,7 +212,7 @@ var coreToolSummaries = map[string]string{
 	"read_video":             "Analyze video — call with media_id from <media:video> tags, or a direct HTTP/HTTPS URL via the 'url' parameter",
 	"create_video":           "Generate videos from text descriptions using AI",
 	"read_document":          "Analyze documents (PDF, DOCX) from <media:document> tags. If fails, use a skill instead. Path is directly accessible",
-	"create_image":           "Generate images from text descriptions using AI",
+	"create_image":           "Generate or edit images; decide from the current session whether this is a new image or an edit, and pass ref_images with the exact source image path for edits",
 	"create_audio":           "Generate music or sound effects from text descriptions using AI",
 	"knowledge_graph_search": "Find people, projects, and their connections — use for relationship questions (who works with whom, project dependencies) that memory_search may miss",
 	"team_tasks":             "Team task board — track progress, manage dependencies (spawn auto-creates delegation tasks)",
@@ -663,10 +663,13 @@ func buildToolingSection(toolNames []string, hasSandbox bool, shellDenyGroups ma
 	}
 	// Add media capabilities section when media tools are available.
 	hasMediaTools := false
+	hasCreateImage := false
 	for _, name := range toolNames {
+		if name == "create_image" {
+			hasCreateImage = true
+		}
 		if name == "read_image" || name == "read_video" || name == "read_audio" || name == "read_document" {
 			hasMediaTools = true
-			break
 		}
 	}
 	if hasMediaTools {
@@ -675,6 +678,13 @@ func buildToolingSection(toolNames []string, hasSandbox bool, shellDenyGroups ma
 			"### Media Files",
 			`When users send media (<media:image path="...">, <media:video id="...">, <media:audio id="...">, <media:document path="...">), use the corresponding read_* tool with the path/media_id. For archives (.zip, .tar.gz, etc.), use exec with the document path to inspect/extract the archive.`,
 			"You have full vision/audio/video capabilities. NEVER say you cannot see images or files.",
+		)
+	}
+	if hasCreateImage {
+		lines = append(lines,
+			"",
+			"### Image Editing",
+			`Before calling create_image, decide whether the request is for a new independent image or changes to an existing image from this session. For edits, recreations, restyling, or follow-up refinements, trace the referenced image in the current conversation and call create_image with ref_images: [{path: the exact image path}]. Find paths in <media:image path="..."> tags or MEDIA: outputs from prior turns. Omit ref_images only for a new independent image; if the source image is ambiguous, ask the user instead of guessing.`,
 		)
 	}
 

@@ -51,6 +51,22 @@ func TestFullModeToolCallStyleGuidesNaturalProgress(t *testing.T) {
 	}
 }
 
+func TestSystemPromptGuidesImageEditsToUseReferencePath(t *testing.T) {
+	cfg := fullTestConfig()
+	cfg.ToolNames = []string{"create_image"}
+	prompt := BuildSystemPrompt(cfg)
+	for _, want := range []string{
+		"Generate or edit images",
+		"trace the referenced image in the current conversation",
+		"ref_images: [{path: the exact image path}]",
+		"if the source image is ambiguous, ask the user instead of guessing",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("image edit guidance missing %q", want)
+		}
+	}
+}
+
 // --- Minimal mode tests ---
 
 func TestMinimalModeExclusions(t *testing.T) {

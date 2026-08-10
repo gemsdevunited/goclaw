@@ -201,7 +201,7 @@ func NewCreateImageTool(registry *providers.Registry) *CreateImageTool {
 func (t *CreateImageTool) Name() string { return "create_image" }
 
 func (t *CreateImageTool) Description() string {
-	return "Generate an image from a text description using an image generation model. Returns a MEDIA: path to the generated image file."
+	return "Generate or edit an image. For edits, pass ref_images with the exact workspace path of the image selected from the current conversation; omit ref_images only for a new, independent image. Returns a MEDIA: path to the generated image file."
 }
 
 func (t *CreateImageTool) Parameters() map[string]any {
@@ -222,7 +222,7 @@ func (t *CreateImageTool) Parameters() map[string]any {
 			},
 			"ref_images": map[string]any{
 				"type":        "array",
-				"description": "Optional array of reference images with custom properties.",
+				"description": "Reference images for editing or preserving style/content. Select the exact image from the current conversation and pass its <media:image path=\"...\"> as {path: ...}. Omit this only when generating a new, independent image.",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -254,7 +254,6 @@ func (t *CreateImageTool) Execute(ctx context.Context, args map[string]any) *Res
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("Failed to resolve reference images: %v", err))
 	}
-
 	chain := ResolveMediaProviderChain(ctx, "create_image", "", "",
 		imageGenProviderPriority, imageGenModelDefaults, t.registry)
 
