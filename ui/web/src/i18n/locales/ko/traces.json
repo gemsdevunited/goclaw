@@ -34,6 +34,7 @@
     "status": "상태:",
     "duration": "소요 시간:",
     "channel": "채널:",
+    "user": "사용자:",
     "tokens": "토큰:",
     "spans": "스팬:",
     "started": "시작됨:",

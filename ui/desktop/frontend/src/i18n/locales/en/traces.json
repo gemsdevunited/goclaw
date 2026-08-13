@@ -26,6 +26,7 @@
     "status": "Status:",
     "duration": "Duration:",
     "channel": "Channel:",
+    "user": "User:",
     "tokens": "Tokens:",
     "spans": "Spans:",
     "started": "Started:",

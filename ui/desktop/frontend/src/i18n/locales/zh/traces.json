@@ -11,6 +11,7 @@
   "description": "LLM 调用追踪和性能数据",
   "detail": {
     "channel": "Channel：",
+    "user": "用户：",
     "copy": "复制",
     "copyTraceId": "复制追踪 ID",
     "createdAt": "创建时间：",

@@ -143,6 +143,11 @@ export function TraceDetailDialog({ traceId, onClose }: Props) {
                 {trace.channel && (
                   <span className="rounded-full px-2 py-0.5 bg-surface-tertiary text-text-secondary border border-border">{trace.channel}</span>
                 )}
+                {trace.user_id && (
+                  <span>
+                    <span className="text-text-secondary">{t('detail.user')}</span> {trace.user_id}
+                  </span>
+                )}
                 <span>
                   <span className="text-text-secondary">{t('detail.tokens')}</span>{' '}
                   {formatTokens(trace.total_input_tokens)} in / {formatTokens(trace.total_output_tokens)} out

@@ -11,6 +11,8 @@ import { useUiStore } from "@/stores/use-ui-store";
 import { SpanTreeNode, StatusBadge } from "./trace-span-tree-node";
 import { buildSpanTree } from "@/adapters/trace.adapter";
 import { TracePreviewBlock } from "./trace-preview-block";
+import { useContactResolver } from "@/hooks/use-contact-resolver";
+import { formatUserLabel } from "@/lib/format-user-label";
 import type { TraceData, SpanData } from "./hooks/use-traces";
 import type { AgentEventPayload } from "@/types/chat";
 
@@ -140,12 +142,17 @@ export function TraceDetailDialog({ traceId, onClose, getTrace, onNavigateTrace,
 /** Trace metadata summary grid */
 function TraceSummaryGrid({ trace, tz, onNavigateTrace }: { trace: TraceData; tz: string; onNavigateTrace?: (id: string) => void }) {
   const { t } = useTranslation("traces");
+  const userIds = useMemo(() => (trace.user_id ? [trace.user_id] : []), [trace.user_id]);
+  const { resolve } = useContactResolver(userIds);
+  const userLabel = formatUserLabel(trace.user_id, resolve);
+
   return (
     <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
       <div><span className="text-muted-foreground">{t("detail.name")}</span> <span className="font-medium">{trace.name || t("unnamed")}</span></div>
       <div><span className="text-muted-foreground">{t("detail.status")}</span> <StatusBadge status={trace.status} /></div>
       <div><span className="text-muted-foreground">{t("detail.duration")}</span> {formatDuration(trace.duration_ms || computeDurationMs(trace.start_time, trace.end_time))}</div>
       <div><span className="text-muted-foreground">{t("detail.channel")}</span> {trace.channel || "—"}</div>
+      <div><span className="text-muted-foreground">{t("detail.user")}</span> {userLabel || "—"}</div>
       <div>
         <span className="text-muted-foreground">{t("detail.tokens")}</span>{" "}
         {formatTokens(trace.total_input_tokens)} in / {formatTokens(trace.total_output_tokens)} out
