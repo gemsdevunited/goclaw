@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
+	"net/url"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -184,6 +187,56 @@ func isUnauthorizedErr(err error) bool {
 		strings.Contains(msg, "http 401")
 }
 
+// isTransportErr detects network and transport-level failures (connection refused, reset, EOF, etc.).
+// Checks parentCtx.Err() FIRST: if parent context was canceled by the caller/user, it is NOT a transport failure.
+func isTransportErr(err error, parentCtx context.Context) bool {
+	if err == nil {
+		return false
+	}
+	if parentCtx.Err() != nil {
+		return false
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "transport: ")
+}
+
+// waitForReconnect polls connected flag up to maxWait for background reconnect to succeed.
+func waitForReconnect(ctx context.Context, connected *atomic.Bool, maxWait time.Duration) bool {
+	deadline := time.Now().Add(maxWait)
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if connected.Load() {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case now := <-ticker.C:
+			if now.After(deadline) {
+				return connected.Load()
+			}
+		}
+	}
+}
+
 func (t *BridgeTool) Execute(ctx context.Context, args map[string]any) *tools.Result {
 	// Recheck grant before execution — defense against revoked grants
 	if t.grantChecker != nil {
@@ -301,6 +354,46 @@ func (t *BridgeTool) Execute(ctx context.Context, args map[string]any) *tools.Re
 			return tools.ErrorResult(fmt.Sprintf(
 				"MCP tool %q: server %q reset its session — reconnecting in background, please retry",
 				t.registeredName, t.serverName))
+		}
+		if isTransportErr(err, ctx) {
+			t.connected.Store(false)
+			slog.Warn("mcp.tool.call.transport_error",
+				"server", t.serverName, "tool", t.registeredName,
+				"user_id", store.UserIDFromContext(ctx),
+				"agent_id", store.AgentIDFromContext(ctx),
+				"latency_ms", latencyMs,
+				"error", err.Error(),
+				"action", "force_reconnect_requested")
+			if t.forceReconnect != nil {
+				t.forceReconnect("bridge_tool transport: " + t.registeredName)
+			}
+
+			// In-Gateway Transparent Retry: Wait up to 500ms for background reconnect to succeed
+			if waitForReconnect(ctx, t.connected, 500*time.Millisecond) {
+				newClient := t.clientPtr.Load()
+				if newClient != nil {
+					slog.Info("mcp.tool.call.transparent_retry_attempt",
+						"server", t.serverName, "tool", t.registeredName)
+					retryResult, retryErr := newClient.CallTool(callCtx, req)
+					if retryErr == nil {
+						slog.Info("mcp.tool.call.transparent_retry_success",
+							"server", t.serverName, "tool", t.registeredName)
+						text := extractTextContent(retryResult)
+						if retryResult.IsError {
+							return tools.ErrorResult(text)
+						}
+						wrapped := wrapMCPContent(text, t.serverName, t.toolName)
+						return tools.NewResult(wrapped)
+					}
+				}
+			}
+
+			return tools.ErrorResult(fmt.Sprintf(
+				"[MCP_STOP_HINT] MCP server %q connection dropped (%v). "+
+					"Reconnection triggered in background. "+
+					"DO NOT retry calling tools on server %q in this turn. "+
+					"Summarize existing results or inform the user about the offline server.",
+				t.serverName, err, t.serverName))
 		}
 		slog.Warn("mcp.tool.call.error",
 			"server", t.serverName, "tool", t.registeredName,
