@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -310,6 +311,123 @@ func TestCreateImageTool_ResolveReferenceImage_Path(t *testing.T) {
 	}
 	if fakeProvider.calledWith.RefImages[0].Strength != 0.6 {
 		t.Errorf("RefImages[0].Strength = %f, want 0.6", fakeProvider.calledWith.RefImages[0].Strength)
+	}
+}
+
+func TestCreateImageTool_AutoIncludesCurrentRunImageWhenRefsOmitted(t *testing.T) {
+	tmpDir := t.TempDir()
+	refFile := filepath.Join(tmpDir, "current-upload.png")
+	docFile := filepath.Join(tmpDir, "notes.txt")
+	pngBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
+	if err := os.WriteFile(refFile, pngBytes, 0644); err != nil {
+		t.Fatalf("failed to write current-run image: %v", err)
+	}
+	if err := os.WriteFile(docFile, []byte("not an image"), 0644); err != nil {
+		t.Fatalf("failed to write current-run document: %v", err)
+	}
+
+	fakeProvider := &nativeImageProvider{
+		name:       "openai-codex",
+		model:      "gpt-image-2",
+		returnData: pngBytes,
+	}
+	reg := providers.NewRegistry(nil)
+	reg.Register(fakeProvider)
+
+	ctx := WithToolWorkspace(context.Background(), tmpDir)
+	ctx = WithRunMediaPaths(ctx, []string{docFile, refFile})
+	ctx = WithCurrentRunImages(ctx, []providers.ImageContent{{
+		MimeType: "image/png",
+		Data:     base64.StdEncoding.EncodeToString(pngBytes),
+	}})
+	ctx = WithBuiltinToolSettings(ctx, BuiltinToolSettings{
+		"create_image": []byte(`{"providers":[{"provider":"openai-codex","model":"gpt-image-2","enabled":true,"timeout":30,"max_retries":1}]}`),
+	})
+
+	result := NewCreateImageTool(reg).Execute(ctx, map[string]any{
+		"prompt": "change the background to blue",
+	})
+	if result.IsError {
+		t.Fatalf("Execute returned error: %q", result.ForLLM)
+	}
+	if fakeProvider.calledWith == nil {
+		t.Fatal("GenerateImage was not called")
+	}
+	if len(fakeProvider.calledWith.RefImages) != 1 {
+		t.Fatalf("expected current-run upload to be forced into RefImages, got %d", len(fakeProvider.calledWith.RefImages))
+	}
+	if fakeProvider.calledWith.RefImages[0].Base64 == "" {
+		t.Error("current-run reference image was not loaded")
+	}
+}
+
+func TestCreateImageTool_CurrentRunImageCanBeExplicitlyIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	refFile := filepath.Join(tmpDir, "unrelated-upload.png")
+	if err := os.WriteFile(refFile, []byte{0x89, 0x50, 0x4e, 0x47}, 0644); err != nil {
+		t.Fatalf("failed to write current-run image: %v", err)
+	}
+
+	ctx := WithToolWorkspace(context.Background(), tmpDir)
+	ctx = WithRunMediaPaths(ctx, []string{refFile})
+	ctx = WithCurrentRunImages(ctx, []providers.ImageContent{{
+		MimeType: "image/png",
+		Data:     base64.StdEncoding.EncodeToString([]byte{0x89, 0x50, 0x4e, 0x47}),
+	}})
+	refs, err := NewCreateImageTool(providers.NewRegistry(nil)).resolveReferenceImages(ctx, map[string]any{
+		"use_current_images": false,
+	})
+	if err != nil {
+		t.Fatalf("resolveReferenceImages returned error: %v", err)
+	}
+	if len(refs) != 0 {
+		t.Fatalf("expected explicit opt-out to keep references empty, got %d", len(refs))
+	}
+}
+
+func TestCreateImageTool_RejectsSpoofedCurrentRunImage(t *testing.T) {
+	tmpDir := t.TempDir()
+	refFile := filepath.Join(tmpDir, "not-really-an-image.png")
+	if err := os.WriteFile(refFile, []byte("plain text"), 0644); err != nil {
+		t.Fatalf("write reference: %v", err)
+	}
+
+	ctx := WithToolWorkspace(context.Background(), tmpDir)
+	ctx = WithRunMediaPaths(ctx, []string{refFile})
+	ctx = WithCurrentRunImages(ctx, []providers.ImageContent{{
+		MimeType: "image/png",
+		Data:     base64.StdEncoding.EncodeToString([]byte("plain text")),
+	}})
+	_, err := NewCreateImageTool(providers.NewRegistry(nil)).resolveReferenceImages(ctx, map[string]any{})
+	if err == nil || !strings.Contains(err.Error(), "not an image") {
+		t.Fatalf("expected image content validation error, got %v", err)
+	}
+}
+
+func TestCreateImageTool_CapsCurrentRunReferenceCount(t *testing.T) {
+	tmpDir := t.TempDir()
+	var paths []string
+	for i := 0; i < 5; i++ {
+		path := filepath.Join(tmpDir, fmt.Sprintf("upload-%d.png", i))
+		if err := os.WriteFile(path, []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, 0644); err != nil {
+			t.Fatalf("write reference %d: %v", i, err)
+		}
+		paths = append(paths, path)
+	}
+
+	ctx := WithToolWorkspace(context.Background(), tmpDir)
+	ctx = WithRunMediaPaths(ctx, paths)
+	var images []providers.ImageContent
+	for range paths {
+		images = append(images, providers.ImageContent{
+			MimeType: "image/png",
+			Data:     base64.StdEncoding.EncodeToString([]byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}),
+		})
+	}
+	ctx = WithCurrentRunImages(ctx, images)
+	_, err := NewCreateImageTool(providers.NewRegistry(nil)).resolveReferenceImages(ctx, map[string]any{})
+	if err == nil || !strings.Contains(err.Error(), "too many current-run reference images") {
+		t.Fatalf("expected reference count error, got %v", err)
 	}
 }
 

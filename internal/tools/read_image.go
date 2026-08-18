@@ -18,6 +18,8 @@ import (
 
 const ctxMediaImages toolContextKey = "tool_media_images"
 
+const ctxCurrentRunImages toolContextKey = "tool_current_run_images"
+
 // WithMediaImages stores base64-encoded images in context for read_image tool access.
 func WithMediaImages(ctx context.Context, images []providers.ImageContent) context.Context {
 	return context.WithValue(ctx, ctxMediaImages, images)
@@ -26,6 +28,18 @@ func WithMediaImages(ctx context.Context, images []providers.ImageContent) conte
 // MediaImagesFromCtx retrieves stored images from context.
 func MediaImagesFromCtx(ctx context.Context) []providers.ImageContent {
 	v, _ := ctx.Value(ctxMediaImages).([]providers.ImageContent)
+	return v
+}
+
+// WithCurrentRunImages stores only images uploaded in the current user turn.
+// Unlike WithMediaImages, this context is never merged with historical media.
+func WithCurrentRunImages(ctx context.Context, images []providers.ImageContent) context.Context {
+	return context.WithValue(ctx, ctxCurrentRunImages, images)
+}
+
+// CurrentRunImagesFromCtx returns images uploaded in the current user turn.
+func CurrentRunImagesFromCtx(ctx context.Context) []providers.ImageContent {
+	v, _ := ctx.Value(ctxCurrentRunImages).([]providers.ImageContent)
 	return v
 }
 

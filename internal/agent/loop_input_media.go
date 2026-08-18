@@ -84,21 +84,25 @@ func (l *Loop) enrichInputMedia(ctx context.Context, req *RunRequest, messages [
 				imageFiles = append(imageFiles, bus.MediaFile{Path: ref.Path, MimeType: ref.MimeType, Filename: filepath.Base(ref.Path)})
 			}
 		}
+		currentImages := loadImages(imageFiles)
+		if len(currentImages) > 0 {
+			ctx = tools.WithCurrentRunImages(ctx, currentImages)
+		}
 		if deferToReadImageTool {
 			// File-ref mode: images primarily accessed via read_image(path=...).
 			// Still load into context as fallback — if LLM omits the path param,
 			// read_image can fall back to context images. This costs Go memory
 			// but NOT LLM tokens (base64 is in Go context, not sent to provider).
-			if images := loadImages(imageFiles); len(images) > 0 {
-				ctx = tools.WithMediaImages(ctx, images)
+			if len(currentImages) > 0 {
+				ctx = tools.WithMediaImages(ctx, currentImages)
 			}
 			slog.Info("vision: file-ref mode, images accessible via read_image tool",
 				"count", len(imageFiles), "agent", l.id)
-		} else if images := loadImages(imageFiles); len(images) > 0 {
+		} else if len(currentImages) > 0 {
 			// Inline mode: read files, base64 encode, attach to message + context.
-			messages[len(messages)-1].Images = images
-			ctx = tools.WithMediaImages(ctx, images)
-			slog.Info("vision: attached images inline to main provider", "count", len(images), "agent", l.id)
+			messages[len(messages)-1].Images = currentImages
+			ctx = tools.WithMediaImages(ctx, currentImages)
+			slog.Info("vision: attached images inline to main provider", "count", len(currentImages), "agent", l.id)
 		}
 	}
 
@@ -142,14 +146,16 @@ func (l *Loop) enrichInputMedia(ctx context.Context, req *RunRequest, messages [
 	// 2f. Collect all media file paths for team workspace auto-collect.
 	// When the leader calls team_tasks(create), these paths are copied to the
 	// team workspace so members can access attached files.
-	if len(mediaRefs) > 0 && l.mediaStore != nil {
+	if len(mediaRefs) > 0 {
 		var mediaPaths []string
 		for _, ref := range mediaRefs {
 			// Prefer workspace-local path (.uploads/) over canonical .media/ path.
 			if ref.Path != "" {
 				mediaPaths = append(mediaPaths, ref.Path)
-			} else if p, err := l.mediaStore.LoadPath(ref.ID); err == nil {
-				mediaPaths = append(mediaPaths, p)
+			} else if l.mediaStore != nil {
+				if p, err := l.mediaStore.LoadPath(ref.ID); err == nil {
+					mediaPaths = append(mediaPaths, p)
+				}
 			}
 		}
 		if len(mediaPaths) > 0 {

@@ -156,7 +156,7 @@ Memory layers: L1 (`memory_search`) returns ranked abstracts; L2 (`memory_expand
 
 | Tool | Description |
 |---|---|
-| `create_image` | Generate images from text (OpenAI, Gemini, MiniMax, DashScope, BytePlus) |
+| `create_image` | Generate or edit images (OpenAI, Gemini, MiniMax, DashScope, BytePlus). Images uploaded in the current user turn are used as references by default; set `use_current_images=false` only for an independent generation |
 | `create_audio` | Generate audio/music/sound effects (MiniMax, ElevenLabs) |
 | `create_video` | Generate video from text/image (MiniMax, Gemini, BytePlus) |
 | `tts` | Text-to-speech synthesis (OpenAI, ElevenLabs, Edge, MiniMax) |

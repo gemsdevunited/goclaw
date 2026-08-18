@@ -24,6 +24,11 @@ import (
 // they must go through the SSRF guard with a bounded read.
 const refImageDownloadTimeout = 30 * time.Second
 
+const (
+	currentRunRefImageMaxCount      = 4
+	currentRunRefImageMaxTotalBytes = 40 * 1024 * 1024
+)
+
 // refImageMaxBytes caps a single reference-image download. Declared as a var so
 // tests can shrink it to exercise the overflow path cheaply.
 var refImageMaxBytes int64 = 20 * 1024 * 1024 // 20 MB
@@ -191,6 +196,47 @@ func (t *CreateImageTool) resolveReferenceImages(ctx context.Context, args map[s
 		}
 	}
 
+	// A current-turn upload is the strongest deterministic signal that the user
+	// expects image-to-image behavior. Tool-call arguments are model-generated,
+	// so ref_images can still be omitted despite prompt/schema guidance. Default
+	// current uploads into the reference list at execution time; callers can opt
+	// out only for an explicitly independent generation request.
+	useCurrentImages, hasUseCurrentImages := args["use_current_images"].(bool)
+	if len(results) == 0 && (!hasUseCurrentImages || useCurrentImages) {
+		currentImages := CurrentRunImagesFromCtx(ctx)
+		if len(currentImages) > currentRunRefImageMaxCount {
+			return nil, fmt.Errorf("too many current-run reference images: maximum is %d", currentRunRefImageMaxCount)
+		}
+		var totalBytes int64
+		for _, img := range currentImages {
+			if int64(base64.StdEncoding.DecodedLen(len(img.Data))) > refImageMaxBytes {
+				return nil, fmt.Errorf("reference image exceeds maximum size of %d bytes", refImageMaxBytes)
+			}
+			data, err := base64.StdEncoding.DecodeString(img.Data)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode current-run reference image: %w", err)
+			}
+			detectedMime := http.DetectContentType(data)
+			if !strings.HasPrefix(detectedMime, "image/") {
+				return nil, fmt.Errorf("current-run reference is not an image: detected %s", detectedMime)
+			}
+			if totalBytes+int64(len(data)) > currentRunRefImageMaxTotalBytes {
+				return nil, fmt.Errorf("current-run reference images exceed maximum combined size of %d bytes", currentRunRefImageMaxTotalBytes)
+			}
+			totalBytes += int64(len(data))
+			refImg := &referenceImage{
+				Data:     data,
+				Base64:   img.Data,
+				MimeType: strings.SplitN(detectedMime, ";", 2)[0],
+				Strength: 0.6,
+			}
+			results = append(results, refImg)
+		}
+		if len(results) > 0 {
+			slog.Info("create_image: auto-attached current-run reference images", "count", len(results))
+		}
+	}
+
 	return results, nil
 }
 
@@ -201,7 +247,7 @@ func NewCreateImageTool(registry *providers.Registry) *CreateImageTool {
 func (t *CreateImageTool) Name() string { return "create_image" }
 
 func (t *CreateImageTool) Description() string {
-	return "Generate or edit an image. For edits, pass ref_images with the exact workspace path of the image selected from the current conversation; omit ref_images only for a new, independent image. Returns a MEDIA: path to the generated image file."
+	return "Generate or edit an image. Current-turn user image uploads are automatically used as references when ref_images is omitted. For edits of older images, pass ref_images with the exact workspace path; set use_current_images=false only for a new independent image unrelated to current uploads. Returns a MEDIA: path to the generated image file."
 }
 
 func (t *CreateImageTool) Parameters() map[string]any {
@@ -233,6 +279,10 @@ func (t *CreateImageTool) Parameters() map[string]any {
 						"description": map[string]any{"type": "string", "description": "Description of the role or content of this reference image (e.g. 'Lâm', 'Quân')."},
 					},
 				},
+			},
+			"use_current_images": map[string]any{
+				"type":        "boolean",
+				"description": "Whether to use images uploaded in the current user turn when ref_images is omitted. Defaults to true; set false only for a new independent image unrelated to those uploads.",
 			},
 		},
 		"required": []string{"prompt"},

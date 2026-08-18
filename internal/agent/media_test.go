@@ -1,14 +1,70 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/media"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
+	"github.com/nextlevelbuilder/goclaw/internal/tools"
 )
+
+func TestEnrichInputMediaExposesCurrentRunPathsWithoutMediaStore(t *testing.T) {
+	workspace := t.TempDir()
+	source := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(source, []byte("hello"), 0644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	ctx := tools.WithToolWorkspace(context.Background(), workspace)
+	req := &RunRequest{
+		SessionKey: "test-session",
+		Media: []bus.MediaFile{{
+			Path:     source,
+			Filename: "notes.txt",
+			MimeType: "text/plain",
+		}},
+	}
+	messages := []providers.Message{{Role: "user", Content: `<media:document name="notes.txt">`}}
+
+	ctx, _, refs := (&Loop{}).enrichInputMedia(ctx, req, messages)
+	if len(refs) != 1 {
+		t.Fatalf("expected one persisted media ref, got %d", len(refs))
+	}
+	paths := tools.RunMediaPathsFromCtx(ctx)
+	if len(paths) != 1 || paths[0] != refs[0].Path {
+		t.Fatalf("current-run paths = %v, want [%s]", paths, refs[0].Path)
+	}
+}
+
+func TestEnrichInputMediaSeparatesCurrentRunImagesFromHistory(t *testing.T) {
+	workspace := t.TempDir()
+	source := filepath.Join(t.TempDir(), "upload.png")
+	if err := os.WriteFile(source, minimalPNG, 0644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	ctx := tools.WithToolWorkspace(context.Background(), workspace)
+	req := &RunRequest{
+		SessionKey: "test-session",
+		Media: []bus.MediaFile{{
+			Path:     source,
+			Filename: "upload.png",
+			MimeType: "image/png",
+		}},
+	}
+	messages := []providers.Message{{Role: "user", Content: `<media:image>`}}
+
+	ctx, _, _ = (&Loop{}).enrichInputMedia(ctx, req, messages)
+	images := tools.CurrentRunImagesFromCtx(ctx)
+	if len(images) != 1 || images[0].Data == "" {
+		t.Fatalf("current-run images = %+v, want one encoded image", images)
+	}
+}
 
 // TestEnrichImageIDs_BareTag verifies enrichment of a bare <media:image> tag
 // (non-Discord channels where SourceURL is empty).
