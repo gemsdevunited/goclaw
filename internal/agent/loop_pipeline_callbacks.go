@@ -560,6 +560,15 @@ func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx c
 				}())
 		}
 
+		// Repair known provider/model serialization failures before the response
+		// reaches ThinkStage and pre-tool hooks. The execution path applies the
+		// same normalization again as a defense for non-provider callers.
+		if err == nil && resp != nil {
+			for i := range resp.ToolCalls {
+				resp.ToolCalls[i] = l.normalizeCreateImageToolCall(resp.ToolCalls[i])
+			}
+		}
+
 		if req.Stream && err == nil && resp != nil && resp.Thinking != "" && !streamThinkingEmitted {
 			emitRun(AgentEvent{
 				Type:    protocol.ChatEventThinking,
