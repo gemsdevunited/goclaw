@@ -30,7 +30,9 @@
     "tokens": "令牌：",
     "toolCalls": "工具",
     "export": "导出追踪",
-    "stopRun": "停止运行"
+    "stopRun": "停止运行",
+    "viewSession": "查看聊天会话",
+    "viewSessionHint": "打开完整聊天会话（含未截断的用户消息）"
   },
   "emptyDescription": "暂无追踪记录。当Agent处理请求时将自动记录追踪。",
   "emptyTitle": "暂无追踪",

@@ -39,7 +39,9 @@
     "llmCalls": "LLM",
     "toolCalls": "tool",
     "export": "Export trace",
-    "stopRun": "Stop run"
+    "stopRun": "Stop run",
+    "viewSession": "View chat session",
+    "viewSessionHint": "Open the full chat session (including the untruncated user message)"
   },
   "span": {
     "model": "Model:",

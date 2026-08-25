@@ -28,8 +28,12 @@ export function formatUserLabel(userId: string, resolve?: Resolver): string {
   // Fallback: prefix numeric IDs with #
   if (/^-?\d+$/.test(userId)) return `#${userId}`;
 
+  // Emails are human-readable — never truncate them in the middle. Let CSS
+  // handle layout overflow (with `title` attribute for full text on hover).
+  if (userId.includes("@")) return userId;
+
   // Truncate long opaque IDs (e.g. oc_295eb80d325c976cbeb4a779e2010518)
-  if (userId.length > 20) return `${userId.slice(0, 10)}…${userId.slice(-4)}`;
+  if (userId.length > 28) return `${userId.slice(0, 12)}…${userId.slice(-6)}`;
 
   return userId;
 }

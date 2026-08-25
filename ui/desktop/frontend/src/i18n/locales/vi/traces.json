@@ -39,7 +39,9 @@
     "llmCalls": "LLM",
     "toolCalls": "công cụ",
     "export": "Xuất trace",
-    "stopRun": "Dừng chạy"
+    "stopRun": "Dừng chạy",
+    "viewSession": "Xem phiên chat",
+    "viewSessionHint": "Mở toàn bộ phiên chat (bao gồm cả tin nhắn gốc của người dùng, không bị cắt)"
   },
   "span": {
     "model": "Model:",

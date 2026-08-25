@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from '../../stores/toast-store'
+import { useUiStore } from '../../stores/ui-store'
+import { useSessionStore } from '../../stores/session-store'
 import { fetchTraceDetail } from '../../hooks/use-traces'
 import { getApiClient, isApiClientReady } from '../../lib/api'
 import { DownloadURL } from '../../../wailsjs/go/main/App'
@@ -15,6 +17,8 @@ interface Props {
 
 export function TraceDetailDialog({ traceId, onClose }: Props) {
   const { t } = useTranslation('traces')
+  const closeSettings = useUiStore((s) => s.closeSettings)
+  const setActiveSession = useSessionStore((s) => s.setActiveSession)
   const [trace, setTrace] = useState<TraceData | null>(null)
   const [spans, setSpans] = useState<SpanData[]>([])
   const [loading, setLoading] = useState(true)
@@ -22,6 +26,13 @@ export function TraceDetailDialog({ traceId, onClose }: Props) {
   const [inputOpen, setInputOpen] = useState(false)
   const [outputOpen, setOutputOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  const handleOpenSession = useCallback(() => {
+    if (!trace?.session_key) return
+    setActiveSession(trace.session_key)
+    closeSettings()
+    onClose()
+  }, [trace?.session_key, setActiveSession, closeSettings, onClose])
 
   const handleCopy = useCallback(() => {
     if (!trace) return
@@ -106,6 +117,18 @@ export function TraceDetailDialog({ traceId, onClose }: Props) {
                     </svg>
                   )}
                 </button>
+                {trace.session_key && (
+                  <button
+                    onClick={handleOpenSession}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs text-text-muted hover:text-text-primary hover:bg-surface-tertiary transition-colors cursor-pointer"
+                    title={t('detail.viewSessionHint')}
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    {t('detail.viewSession')}
+                  </button>
+                )}
                 <button
                   onClick={handleExport}
                   className="p-1.5 text-text-muted hover:text-text-primary transition-colors cursor-pointer"

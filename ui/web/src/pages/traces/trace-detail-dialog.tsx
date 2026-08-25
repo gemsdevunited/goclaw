@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Copy, Check, Download, Square } from "lucide-react";
+import { Copy, Check, Download, Square, MessageSquare } from "lucide-react";
 import { useClipboard } from "@/hooks/use-clipboard";
 import { useHttp } from "@/hooks/use-ws";
 import { useWsEvent } from "@/hooks/use-ws-event";
 import { Events } from "@/api/protocol";
 import { formatDate, formatDuration, formatTokens, computeDurationMs } from "@/lib/format";
 import { useUiStore } from "@/stores/use-ui-store";
+import { ROUTES } from "@/lib/constants";
 import { SpanTreeNode, StatusBadge } from "./trace-span-tree-node";
 import { buildSpanTree } from "@/adapters/trace.adapter";
 import { TracePreviewBlock } from "./trace-preview-block";
@@ -26,6 +28,7 @@ interface TraceDetailDialogProps {
 
 export function TraceDetailDialog({ traceId, onClose, getTrace, onNavigateTrace, onAbortRun }: TraceDetailDialogProps) {
   const { t } = useTranslation("traces");
+  const navigate = useNavigate();
   const tz = useUiStore((s) => s.timezone);
   const http = useHttp();
   const [trace, setTrace] = useState<TraceData | null>(null);
@@ -94,6 +97,20 @@ export function TraceDetailDialog({ traceId, onClose, getTrace, onNavigateTrace,
               {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
               {t("detail.copyTraceId")}
             </button>
+            {trace?.session_key && (
+              <button
+                type="button"
+                onClick={() => {
+                  navigate(`${ROUTES.SESSIONS}/${encodeURIComponent(trace.session_key)}`);
+                  onClose();
+                }}
+                title={t("detail.viewSessionHint")}
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                {t("detail.viewSession")}
+              </button>
+            )}
             <button type="button" onClick={handleExport} disabled={exporting || !trace} className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50">
               {exporting ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" /> : <Download className="h-3.5 w-3.5" />}
               {t("detail.export")}
@@ -152,7 +169,7 @@ function TraceSummaryGrid({ trace, tz, onNavigateTrace }: { trace: TraceData; tz
       <div><span className="text-muted-foreground">{t("detail.status")}</span> <StatusBadge status={trace.status} /></div>
       <div><span className="text-muted-foreground">{t("detail.duration")}</span> {formatDuration(trace.duration_ms || computeDurationMs(trace.start_time, trace.end_time))}</div>
       <div><span className="text-muted-foreground">{t("detail.channel")}</span> {trace.channel || "—"}</div>
-      <div><span className="text-muted-foreground">{t("detail.user")}</span> {userLabel || "—"}</div>
+      <div className="min-w-0"><span className="text-muted-foreground">{t("detail.user")}</span> <span title={trace.user_id} className="break-all">{userLabel || "—"}</span></div>
       <div>
         <span className="text-muted-foreground">{t("detail.tokens")}</span>{" "}
         {formatTokens(trace.total_input_tokens)} in / {formatTokens(trace.total_output_tokens)} out

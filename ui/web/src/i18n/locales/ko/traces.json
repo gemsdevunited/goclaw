@@ -47,7 +47,9 @@
     "llmCalls": "LLM",
     "toolCalls": "도구",
     "export": "추적 내보내기",
-    "stopRun": "실행 중지"
+    "stopRun": "실행 중지",
+    "viewSession": "채팅 세션 보기",
+    "viewSessionHint": "전체 채팅 세션 열기 (잘리지 않은 사용자 메시지 포함)"
   },
   "span": {
     "model": "모델:",
