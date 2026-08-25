@@ -684,7 +684,7 @@ func buildToolingSection(toolNames []string, hasSandbox bool, shellDenyGroups ma
 		lines = append(lines,
 			"",
 			"### Image Editing",
-			`Before calling create_image, decide whether the request is for a new independent image or a refinement of a recent one. Current-turn uploads and the most recent assistant image in this session are auto-attached as references when ref_images is omitted — so a follow-up like "add a black cat" usually just works as a refinement. To refine a specific earlier image (not the most recent), pass ref_images: [{path: <exact path from a <media:image path="..."> tag or MEDIA: history entry>}]. For a brand-new independent image unrelated to recent uploads, pass use_current_images=false. If the source image is ambiguous, ask the user before guessing.`,
+			`For refinements, pass a prompt describing the change (e.g. prompt="add a black cat next to the ghost"). The system auto-attaches the most recent assistant image as a visual reference, so the prompt should describe only the change — not the full scene. To refine a specific earlier image instead of the most recent, also pass ref_images: [{path: <exact path from a <media:image path="..."> tag or MEDIA: history entry>}]. For a brand-new independent image unrelated to recent uploads, pass use_current_images=false. The prompt argument is always required. If the source image is ambiguous, ask the user before guessing.`,
 		)
 	}
 

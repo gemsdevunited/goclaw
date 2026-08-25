@@ -288,7 +288,7 @@ func (t *CreateImageTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"prompt": map[string]any{
 				"type":        "string",
-				"description": "Text description of the image to generate.",
+				"description": "Required text instruction. For new images: describe the scene. For refinements: describe only the change (e.g. 'add a black cat'); the prior assistant image is auto-attached as visual context, so do not re-describe the whole image.",
 			},
 			"aspect_ratio": map[string]any{
 				"type":        "string",
@@ -324,7 +324,7 @@ func (t *CreateImageTool) Parameters() map[string]any {
 func (t *CreateImageTool) Execute(ctx context.Context, args map[string]any) *Result {
 	prompt, _ := args["prompt"].(string)
 	if prompt == "" {
-		return ErrorResult("prompt is required")
+		return ErrorResult("prompt is required: describe the image to generate, or for a refinement describe the change relative to the prior image (e.g. 'add a black cat next to the ghost')")
 	}
 	aspectRatio, _ := args["aspect_ratio"].(string)
 	if aspectRatio == "" {
