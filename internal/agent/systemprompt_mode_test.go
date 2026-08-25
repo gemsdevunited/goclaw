@@ -57,11 +57,11 @@ func TestSystemPromptGuidesImageEditsToUseReferencePath(t *testing.T) {
 	prompt := BuildSystemPrompt(cfg)
 	for _, want := range []string{
 		"Generate or edit images",
-		"automatically used as references when ref_images is omitted",
-		"trace the referenced image in the conversation",
-		"ref_images: [{path: the exact image path}]",
+		"auto-attached as references when ref_images is omitted",
+		"most recent assistant image",
+		"ref_images: [{path:",
 		"use_current_images=false",
-		"if the source image is ambiguous, ask the user instead of guessing",
+		"If the source image is ambiguous, ask the user before guessing",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("image edit guidance missing %q", want)

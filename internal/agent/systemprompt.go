@@ -212,7 +212,7 @@ var coreToolSummaries = map[string]string{
 	"read_video":             "Analyze video — call with media_id from <media:video> tags, or a direct HTTP/HTTPS URL via the 'url' parameter",
 	"create_video":           "Generate videos from text descriptions using AI",
 	"read_document":          "Analyze documents (PDF, DOCX) from <media:document> tags. If fails, use a skill instead. Path is directly accessible",
-	"create_image":           "Generate or edit images; current-turn uploads are reference images by default, and older source images must be passed via ref_images",
+	"create_image":           "Generate or edit images; current-turn uploads and the most recent assistant image auto-attach as refs, or pass ref_images explicitly to pick a different one",
 	"create_audio":           "Generate music or sound effects from text descriptions using AI",
 	"knowledge_graph_search": "Find people, projects, and their connections — use for relationship questions (who works with whom, project dependencies) that memory_search may miss",
 	"team_tasks":             "Team task board — track progress, manage dependencies (spawn auto-creates delegation tasks)",
@@ -684,7 +684,7 @@ func buildToolingSection(toolNames []string, hasSandbox bool, shellDenyGroups ma
 		lines = append(lines,
 			"",
 			"### Image Editing",
-			`Before calling create_image, decide whether the request is for a new independent image or changes to an existing image from this session. Images uploaded in the current user turn are automatically used as references when ref_images is omitted. For edits of older images, recreations, restyling, or follow-up refinements, trace the referenced image in the conversation and call create_image with ref_images: [{path: the exact image path}]. Find paths in <media:image path="..."> tags or MEDIA: outputs from prior turns. Set use_current_images=false only when generating a new independent image unrelated to current uploads; if the source image is ambiguous, ask the user instead of guessing.`,
+			`Before calling create_image, decide whether the request is for a new independent image or a refinement of a recent one. Current-turn uploads and the most recent assistant image in this session are auto-attached as references when ref_images is omitted — so a follow-up like "add a black cat" usually just works as a refinement. To refine a specific earlier image (not the most recent), pass ref_images: [{path: <exact path from a <media:image path="..."> tag or MEDIA: history entry>}]. For a brand-new independent image unrelated to recent uploads, pass use_current_images=false. If the source image is ambiguous, ask the user before guessing.`,
 		)
 	}
 

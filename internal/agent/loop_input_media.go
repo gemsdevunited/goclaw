@@ -26,6 +26,32 @@ func isTextMime(mime string) bool {
 	return false
 }
 
+// findLastAssistantImage scans messages in reverse for the most recent
+// assistant message that produced an image, and returns a pointer to the
+// first image MediaRef on that message. Returns nil if no such message
+// exists or the path is empty (the create_image tool requires a real
+// workspace path to load the image).
+//
+// The returned pointer aliases the MediaRef inside the messages slice; do
+// not mutate it. Used by enrichInputMedia to populate the create_image
+// fallback context. Messages are expected to be in chronological order
+// (oldest first), so scanning from the end finds the freshest image.
+func findLastAssistantImage(messages []providers.Message) *providers.MediaRef {
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := messages[i]
+		if m.Role != "assistant" {
+			continue
+		}
+		for j := range m.MediaRefs {
+			r := &m.MediaRefs[j]
+			if r.Kind == "image" && r.Path != "" {
+				return r
+			}
+		}
+	}
+	return nil
+}
+
 // collectRefsByKind gathers MediaRefs of a given kind from message history
 // in chronological order, then appends current-turn refs. The last ref is the
 // newest document for read_document's omitted media_id fallback.
@@ -106,7 +132,16 @@ func (l *Loop) enrichInputMedia(ctx context.Context, req *RunRequest, messages [
 		}
 	}
 
-	// 2a. Load historical images into context for read_image tool.
+	// 2a. Find the most recent assistant image in the conversation history
+	// and store a pointer in context. The create_image tool reads this in
+	// resolveReferenceImages and auto-attaches the image as a reference when
+	// the LLM omits ref_images on a refinement turn. Scan backwards so we
+	// pick the freshest image the user might be referring to.
+	if lastImg := findLastAssistantImage(messages); lastImg != nil {
+		ctx = tools.WithLastAssistantImage(ctx, lastImg)
+	}
+
+	// 2a-ii. Load historical images into context for read_image tool.
 	// Both modes need this: inline mode for main LLM, file-ref mode as fallback
 	// when LLM calls read_image without the path param.
 	if l.mediaStore != nil {

@@ -42,6 +42,14 @@ type credentialProvider interface {
 // imageGenProviderPriority is the default order for image generation providers.
 var imageGenProviderPriority = []string{"openrouter", "gemini", "openai", "minimax", "dashscope", "byteplus"}
 
+// defaultAutoAttachStrength is the reference strength used when the tool
+// auto-attaches a reference image (current-turn upload or last assistant
+// image) without an LLM-supplied strength. 0.6 is a balanced default that
+// preserves most of the source while letting the new prompt take effect.
+// Centralised here so both auto-attach branches stay in sync and future
+// tuning touches one place.
+const defaultAutoAttachStrength = 0.6
+
 // imageGenModelDefaults maps provider names to default image generation models.
 var imageGenModelDefaults = map[string]string{
 	"openrouter": "google/gemini-2.5-flash-image",
@@ -228,12 +236,36 @@ func (t *CreateImageTool) resolveReferenceImages(ctx context.Context, args map[s
 				Data:     data,
 				Base64:   img.Data,
 				MimeType: strings.SplitN(detectedMime, ";", 2)[0],
-				Strength: 0.6,
+				Strength: defaultAutoAttachStrength,
 			}
 			results = append(results, refImg)
 		}
 		if len(results) > 0 {
 			slog.Info("create_image: auto-attached current-run reference images", "count", len(results))
+		}
+	}
+
+	// 3. Auto-attach the most recent assistant image when no other source
+	//    provided a reference. This is the safety net for refinement turns
+	//    where the LLM omitted ref_images entirely. The LLM retains primary
+	//    control: it can override by passing explicit ref_images above, or
+	//    opt out by setting use_current_images=false (which we already
+	//    short-circuited on above). The path is validated by resolveSingle;
+	//    if it fails (file missing, permission denied), log and skip — do not
+	//    abort the call, so the tool still falls back to text-to-image.
+	if len(results) == 0 && (!hasUseCurrentImages || useCurrentImages) {
+		lastRef := LastAssistantImageFromCtx(ctx)
+		if lastRef != nil && lastRef.Kind == "image" && lastRef.Path != "" {
+			refImg, err := resolveSingle(lastRef.Path, "", "",
+				defaultAutoAttachStrength, "last assistant image")
+			if err != nil {
+				slog.Warn("create_image: failed to resolve last assistant image, skipping auto-attach",
+					"path", lastRef.Path, "error", err)
+			} else if refImg != nil {
+				results = append(results, refImg)
+				slog.Info("create_image: auto-attached last assistant image as ref",
+					"path", lastRef.Path, "strength", defaultAutoAttachStrength)
+			}
 		}
 	}
 
@@ -247,7 +279,7 @@ func NewCreateImageTool(registry *providers.Registry) *CreateImageTool {
 func (t *CreateImageTool) Name() string { return "create_image" }
 
 func (t *CreateImageTool) Description() string {
-	return "Generate or edit an image. Current-turn user image uploads are automatically used as references when ref_images is omitted. For edits of older images, pass ref_images with the exact workspace path; set use_current_images=false only for a new independent image unrelated to current uploads. Returns a MEDIA: path to the generated image file."
+	return "Generate or edit an image. Current-turn user image uploads and the most recent assistant image in the session are auto-attached as references when ref_images is omitted. To use a different image, pass ref_images: [{path: <workspace path>}] with the exact path from a <media:image> tag or MEDIA: history entry. Set use_current_images=false only for a new independent image unrelated to recent uploads. Returns a MEDIA: path to the generated image file."
 }
 
 func (t *CreateImageTool) Parameters() map[string]any {
