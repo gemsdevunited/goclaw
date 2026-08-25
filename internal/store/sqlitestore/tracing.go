@@ -154,13 +154,14 @@ func buildTraceWhere(ctx context.Context, opts store.TraceListOpts) (string, []a
 			COALESCE(input_preview, '') LIKE ? ESCAPE '\' OR
 			COALESCE(output_preview, '') LIKE ? ESCAPE '\' OR
 			COALESCE(session_key, '') LIKE ? ESCAPE '\' OR
+			COALESCE(user_id, '') LIKE ? ESCAPE '\' OR
 			COALESCE(channel, '') LIKE ? ESCAPE '\' OR
 			EXISTS (SELECT 1 FROM agents a WHERE a.id = traces.agent_id AND a.tenant_id = traces.tenant_id AND (COALESCE(a.display_name, '') LIKE ? ESCAPE '\' OR COALESCE(a.agent_key, '') LIKE ? ESCAPE '\')) OR
 			EXISTS (SELECT 1 FROM channel_instances ci WHERE ci.name = traces.channel AND ci.tenant_id = traces.tenant_id AND (COALESCE(ci.display_name, '') LIKE ? ESCAPE '\' OR COALESCE(ci.name, '') LIKE ? ESCAPE '\' OR COALESCE(ci.channel_type, '') LIKE ? ESCAPE '\')) OR
 			EXISTS (SELECT 1 FROM spans s WHERE s.trace_id = traces.id AND s.tenant_id = traces.tenant_id AND (COALESCE(s.tool_name, '') LIKE ? ESCAPE '\' OR COALESCE(s.input_preview, '') LIKE ? ESCAPE '\' OR COALESCE(s.output_preview, '') LIKE ? ESCAPE '\'))
 		)`)
 		pattern := containsPattern(opts.Query)
-		for range 14 {
+		for range 15 {
 			args = append(args, pattern)
 		}
 	}

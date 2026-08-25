@@ -25,6 +25,8 @@
     "minToolCalls": "Tool call tối thiểu",
     "maxToolCalls": "Tool call tối đa",
     "toolName": "Tên tool",
+    "userId": "ID người dùng",
+    "userIdPlaceholder": "vd: user@example.com",
     "hasToolCalls": "Tool call",
     "anyToolCalls": "Bất kỳ tool call",
     "withToolCalls": "Có tool call",
@@ -45,6 +47,7 @@
       "minToolCalls": "Tool tối thiểu",
       "maxToolCalls": "Tool tối đa",
       "toolName": "Tool",
+      "userId": "User",
       "hasToolCalls": "Tool call"
     }
   },

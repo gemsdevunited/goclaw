@@ -61,6 +61,7 @@ export function SessionsPage() {
     return (
       s.key.toLowerCase().includes(q) ||
       (s.label ?? "").toLowerCase().includes(q) ||
+      (s.userID ?? "").toLowerCase().includes(q) ||
       (meta?.display_name ?? "").toLowerCase().includes(q) ||
       (meta?.username ?? "").toLowerCase().includes(q) ||
       (meta?.chat_title ?? "").toLowerCase().includes(q)

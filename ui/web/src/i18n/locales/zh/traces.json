@@ -60,6 +60,8 @@
     "minToolCalls": "最小工具调用",
     "maxToolCalls": "最大工具调用",
     "toolName": "工具名",
+    "userId": "用户 ID",
+    "userIdPlaceholder": "如: user@example.com",
     "hasToolCalls": "工具调用",
     "anyToolCalls": "任意工具调用",
     "withToolCalls": "有工具调用",
@@ -80,6 +82,7 @@
       "minToolCalls": "最小工具",
       "maxToolCalls": "最大工具",
       "toolName": "工具",
+      "userId": "用户",
       "hasToolCalls": "工具调用"
     }
   },

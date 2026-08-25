@@ -26,6 +26,13 @@
   "unnamed": "이름 없음",
   "stopRun": "실행 중지",
   "cached": "캐시됨",
+  "filters": {
+    "userId": "사용자 ID",
+    "userIdPlaceholder": "예: user@example.com",
+    "chips": {
+      "userId": "사용자"
+    }
+  },
   "detail": {
     "title": "추적 세부 정보",
     "copyTraceId": "추적 ID 복사",

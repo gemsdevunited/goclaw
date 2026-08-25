@@ -177,6 +177,7 @@ func buildTraceWhere(ctx context.Context, opts store.TraceListOpts) (string, []a
 			COALESCE(input_preview, '') ILIKE %[1]s ESCAPE '\' OR
 			COALESCE(output_preview, '') ILIKE %[1]s ESCAPE '\' OR
 			COALESCE(session_key, '') ILIKE %[1]s ESCAPE '\' OR
+			COALESCE(user_id, '') ILIKE %[1]s ESCAPE '\' OR
 			COALESCE(channel, '') ILIKE %[1]s ESCAPE '\' OR
 			EXISTS (SELECT 1 FROM agents a WHERE a.id = traces.agent_id AND a.tenant_id = traces.tenant_id AND (COALESCE(a.display_name, '') ILIKE %[1]s ESCAPE '\' OR COALESCE(a.agent_key, '') ILIKE %[1]s ESCAPE '\')) OR
 			EXISTS (SELECT 1 FROM channel_instances ci WHERE ci.name = traces.channel AND ci.tenant_id = traces.tenant_id AND (COALESCE(ci.display_name, '') ILIKE %[1]s ESCAPE '\' OR COALESCE(ci.name, '') ILIKE %[1]s ESCAPE '\' OR COALESCE(ci.channel_type, '') ILIKE %[1]s ESCAPE '\')) OR

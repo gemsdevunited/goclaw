@@ -68,7 +68,6 @@ function toRFC3339(value: string): string {
 
 export function getActiveTraceFilterChips(filters: TraceFilters): TraceFilterChip[] {
   return PARAMS
-    .filter(([key]) => key !== "userId")
     .flatMap(([key]) => {
       const value = filters[key];
       return typeof value === "string" && value.trim() !== ""

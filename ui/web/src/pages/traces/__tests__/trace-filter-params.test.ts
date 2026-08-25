@@ -52,4 +52,12 @@ describe("trace filter params", () => {
     });
     expect(chips.map((chip) => chip.key)).toEqual(["query", "status", "hasToolCalls"]);
   });
+
+  it("serializes userId to user_id and includes it in chips", () => {
+    const params = buildTraceRequestParams({ userId: "alice@example.com" });
+    expect(params).toEqual({ user_id: "alice@example.com" });
+
+    const chips = getActiveTraceFilterChips({ userId: "alice@example.com" });
+    expect(chips).toEqual([{ key: "userId", value: "alice@example.com" }]);
+  });
 });

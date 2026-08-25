@@ -91,6 +91,7 @@ export function TraceFilterBar({ filters, agents, channels, onChange }: TraceFil
         <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-4">
           <FilterField label={t("filters.from")} type="datetime-local" value={filters.from} onChange={(from) => update({ from })} />
           <FilterField label={t("filters.to")} type="datetime-local" value={filters.to} onChange={(to) => update({ to })} />
+          <FilterField label={t("filters.userId")} value={filters.userId} onChange={(userId) => update({ userId })} placeholder={t("filters.userIdPlaceholder")} />
           <FilterField label={t("filters.minInputTokens")} type="number" value={filters.minInputTokens} onChange={(minInputTokens) => update({ minInputTokens })} />
           <FilterField label={t("filters.maxInputTokens")} type="number" value={filters.maxInputTokens} onChange={(maxInputTokens) => update({ maxInputTokens })} />
           <FilterField label={t("filters.minOutputTokens")} type="number" value={filters.minOutputTokens} onChange={(minOutputTokens) => update({ minOutputTokens })} />
@@ -131,11 +132,11 @@ export function TraceFilterBar({ filters, agents, channels, onChange }: TraceFil
   );
 }
 
-function FilterField({ label, value, onChange, type = "text" }: { label: string; value?: string; onChange: (value: string) => void; type?: string }) {
+function FilterField({ label, value, onChange, type = "text", placeholder }: { label: string; value?: string; onChange: (value: string) => void; type?: string; placeholder?: string }) {
   return (
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>
-      <Input type={type} value={value ?? ""} min={type === "number" ? 0 : undefined} onChange={(e) => onChange(e.target.value)} className="text-base md:text-sm" />
+      <Input type={type} value={value ?? ""} placeholder={placeholder} min={type === "number" ? 0 : undefined} onChange={(e) => onChange(e.target.value)} className="text-base md:text-sm" />
     </div>
   );
 }

@@ -25,6 +25,8 @@
     "minToolCalls": "Min tool calls",
     "maxToolCalls": "Max tool calls",
     "toolName": "Tool name",
+    "userId": "User ID",
+    "userIdPlaceholder": "e.g. user@example.com",
     "hasToolCalls": "Tool calls",
     "anyToolCalls": "Any tool calls",
     "withToolCalls": "With tool calls",
@@ -45,6 +47,7 @@
       "minToolCalls": "Min tools",
       "maxToolCalls": "Max tools",
       "toolName": "Tool",
+      "userId": "User",
       "hasToolCalls": "Tool calls"
     }
   },

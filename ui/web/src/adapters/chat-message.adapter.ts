@@ -32,8 +32,11 @@ export function transformHistoryMessages(
       timestamp: messageToTimestamp(m, i, allMsgs.length),
     };
 
-    // Convert persisted media_refs to mediaItems for gallery display
-    if (m.role === "assistant" && m.media_refs && m.media_refs.length > 0) {
+    // Convert persisted media_refs to mediaItems for gallery display.
+    // Applies to all roles: user (attached uploads) and assistant (generated
+    // outputs). Without this, attached images on user messages are lost when
+    // reloading history — the BE persists them on the user message too.
+    if (m.media_refs && m.media_refs.length > 0) {
       chatMsg.mediaItems = m.media_refs.map((ref) => ({
         path: toFileUrl(ref.path || ref.id),
         mimeType: ref.mime_type,
