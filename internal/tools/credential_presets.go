@@ -19,6 +19,10 @@ type CLIPreset struct {
 	// adapter lookup reads the DB column, not this field — so operator
 	// overrides post-create take precedence.
 	AdapterName string `json:"adapter_name,omitempty"`
+	// CredentialTypes lists the typed credential_type values the adapter
+	// accepts (besides legacy "env"). Non-empty means the binary can be created
+	// without global env because typed agent/user credentials supply auth.
+	CredentialTypes []string `json:"credential_types,omitempty"`
 }
 
 // EnvVarDef describes an environment variable required by a CLI tool.
@@ -34,11 +38,18 @@ var CLIPresets = map[string]CLIPreset{
 	"gh": {
 		BinaryName:  "gh",
 		Description: "GitHub CLI",
-		EnvVars:     []EnvVarDef{{Name: "GH_TOKEN", Desc: "GitHub PAT or App token"}},
-		DenyArgs:    []string{`auth\s+`, `ssh-key`, `gpg-key`, `repo\s+delete`, `secret\s+`},
-		DenyVerbose: []string{`--verbose`, `-v`},
-		Timeout:     30,
-		Tips:        "Use --json flag for structured output",
+		EnvVars:     []EnvVarDef{{Name: "GH_TOKEN", Desc: "GitHub PAT (or use a typed GitHub App credential per agent)"}},
+		// extension/alias/config can run arbitrary programs or rewrite gh
+		// behavior while GH_TOKEN is in the child env — deny by default.
+		DenyArgs: []string{
+			`auth\s+`, `ssh-key`, `gpg-key`, `repo\s+delete`, `secret\s+`,
+			`^extension\b`, `^ext\b`, `^alias\s+set\b`, `^config\s+set\b`,
+		},
+		DenyVerbose:     []string{`--verbose`, `-v`},
+		Timeout:         30,
+		Tips:            "Use --json flag for structured output",
+		AdapterName:     "gh",
+		CredentialTypes: []string{"pat", "github_app"},
 	},
 	"gcloud": {
 		BinaryName:  "gcloud",
@@ -122,10 +133,11 @@ var CLIPresets = map[string]CLIPreset{
 			`(?i)-c\s+credential\.`,
 			`(?i)-c\s+core\.sshcommand`,
 		},
-		DenyVerbose: nil,
-		Timeout:     300,
-		Tips:        "Adapter handles auth automatically for clone/fetch/pull/push/submodule based on stored credential type and host scope.",
-		AdapterName: "git",
+		DenyVerbose:     nil,
+		Timeout:         300,
+		Tips:            "Adapter handles auth automatically for clone/fetch/pull/push/submodule based on stored credential type and host scope.",
+		AdapterName:     "git",
+		CredentialTypes: []string{"pat", "ssh_key", "github_app"},
 	},
 	"psql": {
 		BinaryName:  "psql",

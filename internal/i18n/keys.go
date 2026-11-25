@@ -209,10 +209,10 @@ const (
 	MsgFailedToDeleteFile    = "error.failed_to_delete_file"    // "failed to delete"
 
 	// --- OAuth ---
-	MsgNoPendingOAuth        = "error.no_pending_oauth"        // "no pending OAuth flow"
-	MsgFailedToSaveToken     = "error.failed_to_save_token"    // "failed to save token"
-	MsgOAuthCallbackSuccess  = "oauth.callback_success"        // "Authorization successful. You may close this window."
-	MsgOAuthCallbackFailed   = "oauth.callback_failed"         // "Authorization failed. You may close this window."
+	MsgNoPendingOAuth       = "error.no_pending_oauth"     // "no pending OAuth flow"
+	MsgFailedToSaveToken    = "error.failed_to_save_token" // "failed to save token"
+	MsgOAuthCallbackSuccess = "oauth.callback_success"     // "Authorization successful. You may close this window."
+	MsgOAuthCallbackFailed  = "oauth.callback_failed"      // "Authorization failed. You may close this window."
 
 	// --- Intent Classify (channel-facing status replies) ---
 	MsgStatusWorking       = "status.working"         // "🔄 I'm working on your request... Please wait."
@@ -377,4 +377,5 @@ const (
 	MsgGitCredHostScopeInvalid         = "error.git_cred_host_scope_invalid"         // "host_scope %q is not a valid hostname"
 	MsgGitCredBlobMissingField         = "error.git_cred_blob_missing_field"         // "blob missing required field %q"
 	MsgGitCredUnsupportedCredType      = "error.git_cred_unsupported_cred_type"      // "credential_type %q is not supported"
+	MsgGitHubAppCredInvalid            = "error.github_app_cred_invalid"             // "GitHub App credential is invalid: %s"
 )

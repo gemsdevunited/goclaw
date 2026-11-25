@@ -112,25 +112,17 @@ func (gitAdapter) Prepare(ctx context.Context, _ *store.SecureCLIBinary, cred *s
 		if err != nil {
 			return nil, err
 		}
-		if err := validateTokenShape(token); err != nil {
+		return gitHTTPTokenInjection(targetHost, token)
+	case "github_app":
+		app, err := ParseGitHubAppBlob(cred.EncryptedEnv)
+		if err != nil {
 			return nil, err
 		}
-		// GIT_CONFIG_COUNT env approach (git 2.31+) — same effect as
-		// `-c http.https://host/.extraheader=Authorization: Basic ...` but
-		// the token stays out of argv. Single-entry header keeps host-scoping
-		// strict; the matching url prefix ensures git skips its credential
-		// helpers for this URL automatically.
-		configKey := fmt.Sprintf("http.https://%s/.extraheader", targetHost)
-		basicPayload := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
-		configVal := "Authorization: Basic " + basicPayload
-		return &Injection{
-			Env: map[string]string{
-				"GIT_CONFIG_COUNT":   "1",
-				"GIT_CONFIG_KEY_0":   configKey,
-				"GIT_CONFIG_VALUE_0": configVal,
-			},
-			ScrubValues: []string{token, basicPayload, configVal},
-		}, nil
+		token, err := MintGitHubAppToken(ctx, targetHost, app)
+		if err != nil {
+			return nil, err
+		}
+		return gitHTTPTokenInjection(targetHost, token)
 	case "ssh_key":
 		keyPEM, err := decodeSSHKeyBlob(cred.EncryptedEnv)
 		if err != nil {
@@ -165,6 +157,30 @@ func (gitAdapter) Prepare(ctx context.Context, _ *store.SecureCLIBinary, cred *s
 	default:
 		return nil, fmt.Errorf("git adapter: unsupported credential_type %q", typ)
 	}
+}
+
+// gitHTTPTokenInjection builds the host-scoped HTTP auth header injection used
+// by both the PAT and GitHub App paths.
+//
+// GIT_CONFIG_COUNT env approach (git 2.31+) — same effect as
+// `-c http.https://host/.extraheader=Authorization: Basic ...` but the token
+// stays out of argv. Single-entry header keeps host-scoping strict; the
+// matching url prefix ensures git skips its credential helpers for this URL.
+func gitHTTPTokenInjection(targetHost, token string) (*Injection, error) {
+	if err := validateTokenShape(token); err != nil {
+		return nil, err
+	}
+	configKey := fmt.Sprintf("http.https://%s/.extraheader", targetHost)
+	basicPayload := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+	configVal := "Authorization: Basic " + basicPayload
+	return &Injection{
+		Env: map[string]string{
+			"GIT_CONFIG_COUNT":   "1",
+			"GIT_CONFIG_KEY_0":   configKey,
+			"GIT_CONFIG_VALUE_0": configVal,
+		},
+		ScrubValues: []string{token, basicPayload, configVal},
+	}, nil
 }
 
 // decodeSSHKeyBlob extracts the private-key PEM from the credential blob.

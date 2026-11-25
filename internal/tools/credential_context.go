@@ -31,7 +31,7 @@ func GenerateCredentialContext(creds []store.SecureCLIBinary) string {
 	b.WriteString("- Parse JSON output directly — do NOT pipe to jq\n\n")
 	b.WriteString("### Available CLIs:\n\n")
 
-	hasGit := false
+	hasGit, hasGH := false, false
 	for _, c := range creds {
 		b.WriteString(fmt.Sprintf("**%s** — %s\n", c.BinaryName, c.Description))
 		if blocked := summarizeDenyPatterns(c.DenyArgs); blocked != "" {
@@ -41,9 +41,21 @@ func GenerateCredentialContext(creds []store.SecureCLIBinary) string {
 			b.WriteString(fmt.Sprintf("  Tip: %s\n", c.Tips))
 		}
 		b.WriteString("\n")
-		if c.AdapterName != nil && *c.AdapterName == "git" {
-			hasGit = true
+		if c.AdapterName != nil {
+			switch *c.AdapterName {
+			case "git":
+				hasGit = true
+			case "gh":
+				hasGH = true
+			}
 		}
+	}
+
+	if hasGH {
+		b.WriteString("### gh (adapter-managed):\n")
+		b.WriteString("- Auth is injected per command (PAT or a GitHub App installation token minted on demand). Never run `gh auth` or try to read the token.\n")
+		b.WriteString("- When authenticated as a GitHub App, actions appear as the App bot (`<app-name>[bot]`); `gh api user` is not available to App tokens — use `gh api /installation/repositories` to see accessible repos.\n")
+		b.WriteString("- `gh extension`, `gh alias set` and `gh config set` are denied by policy.\n\n")
 	}
 
 	if hasGit {
@@ -78,7 +90,7 @@ func summarizeDenyPatterns(patternsJSON json.RawMessage) string {
 	}
 	// Convert regex patterns to readable form by stripping common regex syntax
 	readable := make([]string, 0, len(patterns))
-	replacer := strings.NewReplacer(`\s+`, " ", `\s*`, " ", `\b`, "", `\w+`, "*")
+	replacer := strings.NewReplacer(`\s+`, " ", `\s*`, " ", `\b`, "", `\w+`, "*", `^`, "", `(?i)`, "")
 	for _, p := range patterns {
 		readable = append(readable, replacer.Replace(p))
 	}

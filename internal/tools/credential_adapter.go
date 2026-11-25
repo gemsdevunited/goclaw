@@ -27,6 +27,17 @@ type CredentialAdapter interface {
 	Prepare(ctx context.Context, bin *store.SecureCLIBinary, cred *store.SecureCLIUserCredential, argv []string) (*Injection, error)
 }
 
+// sandboxSafeAdapter is implemented by adapters whose Injection is env-only
+// (no host tmpfiles), so it remains valid when the exec runs in a sandbox.
+type sandboxSafeAdapter interface {
+	sandboxSafe() bool
+}
+
+func isSandboxSafeAdapter(a CredentialAdapter) bool {
+	s, ok := a.(sandboxSafeAdapter)
+	return ok && s.sandboxSafe()
+}
+
 // Injection is the adapter's instruction set for one exec call.
 //
 //   - ArgvPrefix is spliced in BETWEEN binary and user-supplied args (so

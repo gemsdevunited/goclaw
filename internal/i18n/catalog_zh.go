@@ -343,6 +343,7 @@ func init() {
 		MsgGitCredHostScopeInvalid:         "host_scope %q 不是有效的主机名",
 		MsgGitCredBlobMissingField:         "凭据 blob 缺少必填字段 %q",
 		MsgGitCredUnsupportedCredType:      "不支持的 credential_type %q",
+		MsgGitHubAppCredInvalid:            "GitHub App 凭据无效：%s",
 
 		// Message tool cross-target forward notice
 		MessageCrossTargetForwarded: "📤 已按请求转发至 %s:%q",

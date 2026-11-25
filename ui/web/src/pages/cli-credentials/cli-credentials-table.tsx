@@ -70,7 +70,7 @@ export function CliCredentialsTable({ items, onEdit, onDelete, onUserCreds, onAg
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => onAgentAccess(item, item.adapter_name === "git" ? "credentials" : "grants")}
+                      onClick={() => onAgentAccess(item, item.adapter_name === "git" || item.adapter_name === "gh" ? "credentials" : "grants")}
                       title={t("agentAccess.title")}
                       className="gap-1"
                     >

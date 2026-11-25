@@ -17,7 +17,15 @@ import { toast } from "@/stores/use-toast-store";
 import { useHttp } from "@/hooks/use-ws";
 import i18next from "i18next";
 import { CliCredentialEnvVarsSection, type ManualEnvEntry } from "./cli-credential-env-vars-section";
-import { CliCredentialGitFields, type GitCredentialType } from "./cli-credential-git-fields";
+import {
+  CliCredentialGitFields,
+  coerceCredentialType,
+  emptyGitHubAppFields,
+  typedCredentialTypesFor,
+  type GitCredentialType,
+  type GitHubAppFields,
+} from "./cli-credential-git-fields";
+import { buildTypedCredentialPayload } from "./cli-agent-credentials-dialog-helpers";
 import type { SecureCLIBinary } from "./hooks/use-cli-credentials";
 import type { CLIEnvEntryResponse, CLIEnvPayload } from "@/types/cli-credential";
 
@@ -78,13 +86,15 @@ export function CLIUserCredentialsDialog({ open, onOpenChange, binary }: CLIUser
   const [saving, setSaving] = useState(false);
   const [deleting, setDeletingId] = useState<string | null>(null);
 
-  // Phase 5 — git typed credential form state. Always declared, only
-  // exercised when binary.adapter_name === "git".
-  const isGit = binary.adapter_name === "git";
+  // Typed credential form state. Always declared, only exercised when the
+  // binary's adapter accepts typed credentials (git, gh).
+  const typedTypes = typedCredentialTypesFor(binary.adapter_name);
+  const isGit = typedTypes !== null;
   const [gitType, setGitType] = useState<GitCredentialType>("pat");
   const [gitHostScope, setGitHostScope] = useState("");
   const [gitToken, setGitToken] = useState("");
   const [gitPrivateKey, setGitPrivateKey] = useState("");
+  const [githubApp, setGithubApp] = useState<GitHubAppFields>(emptyGitHubAppFields);
   const [gitErrorKey, setGitErrorKey] = useState<string | undefined>(undefined);
   const [gitHasExistingSecret, setGitHasExistingSecret] = useState(false);
 
@@ -115,6 +125,7 @@ export function CLIUserCredentialsDialog({ open, onOpenChange, binary }: CLIUser
     setGitHostScope("");
     setGitToken("");
     setGitPrivateKey("");
+    setGithubApp(emptyGitHubAppFields);
     setGitErrorKey(undefined);
     setGitHasExistingSecret(false);
     loadList();
@@ -129,6 +140,7 @@ export function CLIUserCredentialsDialog({ open, onOpenChange, binary }: CLIUser
     setGitHostScope("");
     setGitToken("");
     setGitPrivateKey("");
+    setGithubApp(emptyGitHubAppFields);
     setGitErrorKey(undefined);
     setGitHasExistingSecret(false);
     setView("form");
@@ -153,52 +165,17 @@ export function CLIUserCredentialsDialog({ open, onOpenChange, binary }: CLIUser
         has_secret?: boolean;
       }>(`/v1/cli-credentials/${binary.id}/user-credentials/${entry.user_id}`);
       setEnvEntries(entriesFromEnv(res.env));
-      if (isGit) {
-        const t = (res.credential_type ?? "env") as GitCredentialType;
-        setGitType(t === "pat" || t === "ssh_key" ? t : "env");
+      if (typedTypes) {
+        setGitType(coerceCredentialType(res.credential_type, typedTypes));
         setGitHostScope(res.host_scope ?? "");
         setGitHasExistingSecret(!!res.has_secret);
         setGitToken("");
         setGitPrivateKey("");
+        setGithubApp(emptyGitHubAppFields);
       }
     } catch {
       // leave fields empty — user can re-enter
     }
-  };
-
-  /** Build the PUT payload for the git typed-credential path.
-   * Returns null when the caller should fall through to the legacy env flow
-   * (gitType==="env" or non-git binary). Returns a string error message when
-   * client-side validation fails BEFORE the network round-trip — we still want
-   * inline UI on host_scope required to be instant. */
-  const buildGitTypedPayload = (): { credential_type: string; host_scope: string; blob: Record<string, string> } | null | string => {
-    if (!isGit || gitType === "env") return null;
-    const scope = gitHostScope.trim();
-    if (!scope) {
-      setGitErrorKey("git.cred_host_scope_required");
-      return "host_scope_required";
-    }
-    if (gitType === "pat") {
-      const tok = gitToken;
-      // On edit, allow empty token → caller should not submit (keeps existing secret).
-      // We block here because typed PUT replaces the blob entirely.
-      if (!tok) {
-        if (gitHasExistingSecret) return "no_change";
-        setGitErrorKey("git.cred_blob_missing_token");
-        return "token_required";
-      }
-      return { credential_type: "pat", host_scope: scope, blob: { token: tok } };
-    }
-    if (gitType === "ssh_key") {
-      const key = gitPrivateKey;
-      if (!key.trim()) {
-        if (gitHasExistingSecret) return "no_change";
-        setGitErrorKey("git.cred_blob_missing_key");
-        return "key_required";
-      }
-      return { credential_type: "ssh_key", host_scope: scope, blob: { key } };
-    }
-    return null;
   };
 
   const handleSave = async () => {
@@ -207,22 +184,30 @@ export function CLIUserCredentialsDialog({ open, onOpenChange, binary }: CLIUser
 
     setGitErrorKey(undefined);
 
-    // Git typed branch — supersedes the legacy env path for pat/ssh_key.
+    // Typed branch (pat / ssh_key / github_app) — supersedes the legacy env path.
     if (isGit && gitType !== "env") {
-      const payload = buildGitTypedPayload();
-      if (typeof payload === "string") {
-        // Client-side validation failure already set gitErrorKey above; bail
-        // without toast so the inline field error is the single source of truth.
-        if (payload === "no_change") {
-          toast.success(i18next.t("cli-credentials:userCredentials.saved"));
-          setView("list");
-        }
+      // Client-side validation runs BEFORE the network round-trip so inline
+      // field errors (host_scope required, incomplete App) are instant.
+      const result = buildTypedCredentialPayload({
+        type: gitType,
+        hostScope: gitHostScope,
+        token: gitToken,
+        privateKey: gitPrivateKey,
+        githubApp,
+        hasExistingSecret: gitHasExistingSecret,
+      });
+      if (result.kind === "error") {
+        setGitErrorKey(result.errorKey);
         return;
       }
-      if (payload === null) return;
+      if (result.kind === "no_change") {
+        toast.success(i18next.t("cli-credentials:userCredentials.saved"));
+        setView("list");
+        return;
+      }
       setSaving(true);
       try {
-        await http.put(`/v1/cli-credentials/${binary.id}/user-credentials/${uid}`, payload);
+        await http.put(`/v1/cli-credentials/${binary.id}/user-credentials/${uid}`, result.payload);
         toast.success(i18next.t("cli-credentials:userCredentials.saved"));
         await loadList();
         setView("list");
@@ -322,7 +307,9 @@ export function CLIUserCredentialsDialog({ open, onOpenChange, binary }: CLIUser
                               ? t("userCredentials.credentialTypePAT")
                               : entry.credential_type === "ssh_key"
                                 ? t("userCredentials.credentialTypeSSH")
-                                : entry.credential_type}
+                                : entry.credential_type === "github_app"
+                                  ? t("userCredentials.credentialTypeGitHubApp")
+                                  : entry.credential_type}
                           </Badge>
                         ) : entry.has_env ? (
                           <Badge variant="secondary" className="shrink-0 text-xs">
@@ -400,6 +387,9 @@ export function CLIUserCredentialsDialog({ open, onOpenChange, binary }: CLIUser
                 <CliCredentialGitFields
                   type={gitType}
                   onTypeChange={setGitType}
+                  allowedTypes={typedTypes ?? undefined}
+                  githubApp={githubApp}
+                  onGitHubAppChange={setGithubApp}
                   hostScope={gitHostScope}
                   onHostScopeChange={setGitHostScope}
                   token={gitToken}

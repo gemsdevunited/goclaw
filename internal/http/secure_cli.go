@@ -164,7 +164,10 @@ func (h *SecureCLIHandler) handleCreate(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgRequired, "binary_name")})
 		return
 	}
-	adapterManagedPreset := preset != nil && strings.TrimSpace(preset.AdapterName) != "" && len(preset.EnvVars) == 0
+	// Adapter-managed presets may be created without global env when auth comes
+	// from typed agent/user credentials (git, gh with github_app/pat).
+	adapterManagedPreset := preset != nil && strings.TrimSpace(preset.AdapterName) != "" &&
+		(len(preset.EnvVars) == 0 || len(preset.CredentialTypes) > 0)
 	if len(req.Env) == 0 && !adapterManagedPreset {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgRequired, "env")})
 		return
@@ -326,6 +329,8 @@ type cliPresetResponse struct {
 	Timeout     int               `json:"timeout"`
 	Tips        string            `json:"tips"`
 	AdapterName string            `json:"adapter_name,omitempty"`
+	// CredentialTypes lists typed credential types the adapter accepts.
+	CredentialTypes []string `json:"credential_types,omitempty"`
 }
 
 func normalizedCLIPresets() map[string]cliPresetResponse {
@@ -344,14 +349,15 @@ func normalizedCLIPresets() map[string]cliPresetResponse {
 			denyVerbose = []string{}
 		}
 		out[key] = cliPresetResponse{
-			BinaryName:  preset.BinaryName,
-			Description: preset.Description,
-			EnvVars:     envVars,
-			DenyArgs:    denyArgs,
-			DenyVerbose: denyVerbose,
-			Timeout:     preset.Timeout,
-			Tips:        preset.Tips,
-			AdapterName: preset.AdapterName,
+			BinaryName:      preset.BinaryName,
+			Description:     preset.Description,
+			EnvVars:         envVars,
+			DenyArgs:        denyArgs,
+			DenyVerbose:     denyVerbose,
+			Timeout:         preset.Timeout,
+			Tips:            preset.Tips,
+			AdapterName:     preset.AdapterName,
+			CredentialTypes: preset.CredentialTypes,
 		}
 	}
 	return out

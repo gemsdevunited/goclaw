@@ -343,6 +343,7 @@ func init() {
 		MsgGitCredHostScopeInvalid:         "host_scope %q is not a valid hostname",
 		MsgGitCredBlobMissingField:         "credential blob is missing required field %q",
 		MsgGitCredUnsupportedCredType:      "credential_type %q is not supported",
+		MsgGitHubAppCredInvalid:            "GitHub App credential is invalid: %s",
 
 		// Message tool cross-target forward notice
 		MessageCrossTargetForwarded: "📤 Forwarded to %s as requested: %q",
