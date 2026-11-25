@@ -62,11 +62,11 @@ describe("agent credential payload builder", () => {
       token: "",
       privateKey: "",
       githubApp: {
-        appId: " 123 ",
-        installationId: "456",
+        ...emptyGitHubAppFields,
+        clientId: " Iv23liAbC123 ",
+        owner: "gemsdevunited",
         privateKey: "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----",
         repositories: "GemSFastify",
-        permissions: "",
       },
       hasExistingSecret: false,
     });
@@ -77,9 +77,9 @@ describe("agent credential payload builder", () => {
         credential_type: "github_app",
         host_scope: "github.com",
         blob: {
-          app_id: "123",
-          installation_id: "456",
+          client_id: "Iv23liAbC123",
           private_key: "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----",
+          owner: "gemsdevunited",
           repositories: "GemSFastify",
         },
       },
@@ -104,7 +104,7 @@ describe("agent credential payload builder", () => {
       hostScope: "github.com",
       token: "",
       privateKey: "",
-      githubApp: { ...emptyGitHubAppFields, appId: "123" },
+      githubApp: { ...emptyGitHubAppFields, clientId: "Iv23liAbC123" },
       hasExistingSecret: true,
     });
     expect(result).toEqual({ kind: "error", errorKey: "git.cred_github_app_incomplete" });

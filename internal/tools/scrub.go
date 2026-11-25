@@ -17,8 +17,12 @@ var credentialPatterns = []*regexp.Regexp{
 	// GitHub personal access tokens
 	regexp.MustCompile(`ghp_[a-zA-Z0-9]{36}`),
 	regexp.MustCompile(`gho_[a-zA-Z0-9]{36}`),
-	regexp.MustCompile(`ghu_[a-zA-Z0-9]{36}`),
-	regexp.MustCompile(`ghs_[a-zA-Z0-9]{36}`),
+	// GitHub App installation (ghs_) and user-to-server (ghu_) tokens moved to
+	// a ~520-char stateless format `ghs_<APPID>_<JWT>` (dots, dashes,
+	// underscores) in 2026. Match the full variable-length token so no tail
+	// survives redaction; still covers the classic 36-char opaque form.
+	regexp.MustCompile(`ghu_[A-Za-z0-9._-]{36,}`),
+	regexp.MustCompile(`ghs_[A-Za-z0-9._-]{36,}`),
 	regexp.MustCompile(`ghr_[a-zA-Z0-9]{36}`),
 	// AWS
 	regexp.MustCompile(`AKIA[A-Z0-9]{16}`),

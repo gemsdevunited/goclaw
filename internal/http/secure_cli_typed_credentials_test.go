@@ -557,3 +557,28 @@ func TestPutAgentCredential_GitHubAppInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestPutAgentCredential_GitHubAppClientIDOnly(t *testing.T) {
+	st := &recordingSecureCLIStore{}
+	h := newAgentCredentialTestHandler(st)
+	rec := putAgentCred(t, h, uuid.New(), uuid.New(), map[string]any{
+		"credential_type": "github_app",
+		"host_scope":      "github.com",
+		"blob": map[string]string{
+			"client_id": "Iv23liAbC123", "owner": "gemsdevunited", "private_key": testGitHubAppPEM(t),
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(st.lastAgentTypedEnv, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["client_id"] != "Iv23liAbC123" || got["owner"] != "gemsdevunited" {
+		t.Fatalf("stored blob mismatch: %#v", got)
+	}
+	if _, ok := got["installation_id"]; ok {
+		t.Fatalf("empty installation_id must not be stored: %#v", got)
+	}
+}

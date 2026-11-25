@@ -32,25 +32,29 @@ func testGitHubAppKey(t *testing.T) (*rsa.PrivateKey, string) {
 	return key, pemStr
 }
 
-// fakeGitHubAppServer serves POST /app/installations/{id}/access_tokens and
-// verifies the App JWT signature against pub.
+// fakeGitHubAppServer emulates the GitHub App endpoints GoClaw uses and
+// verifies the App JWT signature + issuer.
 type fakeGitHubAppServer struct {
 	srv      *httptest.Server
-	calls    atomic.Int32
+	calls    atomic.Int32 // access_tokens calls
+	lookups  atomic.Int32 // installation lookup calls
 	lastBody atomic.Value // map[string]any
+	lastIss  atomic.Value // string
 	expires  time.Duration
 	status   int
+	// installations served by GET /app/installations and /orgs|users/{login}/installation.
+	mu            sync.Mutex
+	installations []githubAppInstallation
+	liveIDs       map[string]bool // installation ids whose access_tokens succeed
 }
 
-func newFakeGitHubAppServer(t *testing.T, pub *rsa.PublicKey, appID string) *fakeGitHubAppServer {
+func newFakeGitHubAppServer(t *testing.T, pub *rsa.PublicKey, issuer string) *fakeGitHubAppServer {
 	t.Helper()
-	f := &fakeGitHubAppServer{expires: time.Hour, status: http.StatusCreated}
+	f := &fakeGitHubAppServer{expires: time.Hour, status: http.StatusCreated, liveIDs: map[string]bool{"456": true}}
+	inst := githubAppInstallation{ID: 456}
+	inst.Account.Login = "gemsdevunited"
+	f.installations = []githubAppInstallation{inst}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := f.calls.Add(1)
-		if r.Method != http.MethodPost || r.URL.Path != "/app/installations/456/access_tokens" {
-			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
-			return
-		}
 		jwt := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		parts := strings.Split(jwt, ".")
 		if len(parts) != 3 {
@@ -66,8 +70,45 @@ func newFakeGitHubAppServer(t *testing.T, pub *rsa.PublicKey, appID string) *fak
 		claimsRaw, _ := base64.RawURLEncoding.DecodeString(parts[1])
 		var claims map[string]any
 		_ = json.Unmarshal(claimsRaw, &claims)
-		if claims["iss"] != appID {
+		f.lastIss.Store(claims["iss"])
+		if claims["iss"] != issuer {
 			http.Error(w, `{"message":"wrong iss"}`, http.StatusUnauthorized)
+			return
+		}
+		f.mu.Lock()
+		insts := append([]githubAppInstallation(nil), f.installations...)
+		live := map[string]bool{}
+		for k, v := range f.liveIDs {
+			live[k] = v
+		}
+		f.mu.Unlock()
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/app/installations":
+			f.lookups.Add(1)
+			_ = json.NewEncoder(w).Encode(insts)
+			return
+		case r.Method == http.MethodGet && (strings.HasPrefix(r.URL.Path, "/orgs/") || strings.HasPrefix(r.URL.Path, "/users/")) && strings.HasSuffix(r.URL.Path, "/installation"):
+			f.lookups.Add(1)
+			login := strings.Split(r.URL.Path, "/")[2]
+			for _, it := range insts {
+				if it.Account.Login == login && strings.HasPrefix(r.URL.Path, "/users/") == (login == "solo-user") {
+					_ = json.NewEncoder(w).Encode(it)
+					return
+				}
+			}
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/app/installations/") && strings.HasSuffix(r.URL.Path, "/access_tokens"):
+		default:
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+
+		n := f.calls.Add(1)
+		id := strings.Split(r.URL.Path, "/")[3]
+		if !live[id] {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 			return
 		}
 		var body map[string]any
@@ -79,8 +120,10 @@ func newFakeGitHubAppServer(t *testing.T, pub *rsa.PublicKey, appID string) *fak
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
+		// 2026 stateless format: ghs_<APPID>_<JWT>, ~520 chars with dots.
+		tok := "ghs_123_eyJhbGciOiJSUzI1NiJ9." + strings.Repeat("a", 400) + "." + strings.Repeat("b", 80) + string(rune('a'+n%26))
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"token":      "ghs_test" + strings.Repeat("x", 10) + string(rune('a'+n%26)),
+			"token":      tok,
 			"expires_at": githubAppNow().Add(f.expires).UTC().Format(time.RFC3339),
 		})
 	}))
@@ -94,9 +137,11 @@ func withGitHubAppTestServer(t *testing.T, f *fakeGitHubAppServer) {
 	githubAppAPIBaseOverride = f.srv.URL
 	githubAppHTTPClient = f.srv.Client()
 	githubAppTokenCache = sync.Map{}
+	githubAppInstallCache = sync.Map{}
 	t.Cleanup(func() {
 		githubAppAPIBaseOverride, githubAppHTTPClient = prevBase, prevClient
 		githubAppTokenCache = sync.Map{}
+		githubAppInstallCache = sync.Map{}
 	})
 }
 
@@ -135,7 +180,10 @@ func TestParseGitHubAppFields(t *testing.T) {
 	}{
 		{"app id non-numeric", func(m map[string]string) { m["app_id"] = "abc" }, errGitHubAppIDInvalid},
 		{"app id zero", func(m map[string]string) { m["app_id"] = "0" }, errGitHubAppIDInvalid},
-		{"installation missing", func(m map[string]string) { delete(m, "installation_id") }, errGitHubAppInstallInvalid},
+		{"installation non-numeric", func(m map[string]string) { m["installation_id"] = "abc" }, errGitHubAppInstallInvalid},
+		{"no issuer", func(m map[string]string) { delete(m, "app_id") }, errGitHubAppIssuerMissing},
+		{"client id invalid", func(m map[string]string) { m["client_id"] = "Iv23 li" }, errGitHubAppClientIDInvalid},
+		{"owner invalid", func(m map[string]string) { m["owner"] = "-bad/owner" }, errGitHubAppOwnerInvalid},
 		{"key missing", func(m map[string]string) { m["private_key"] = "" }, errGitHubAppKeyMissing},
 		{"key garbage", func(m map[string]string) { m["private_key"] = "not a key" }, errGitHubAppKeyInvalid},
 		{"repo invalid", func(m map[string]string) { m["repositories"] = "owner/repo" }, errGitHubAppRepoInvalid},
@@ -278,7 +326,7 @@ func TestGHAdapter_GitHubApp(t *testing.T) {
 		t.Fatalf("prepare: %v", err)
 	}
 	tok := inj.Env["GH_TOKEN"]
-	if !strings.HasPrefix(tok, "ghs_test") {
+	if !strings.HasPrefix(tok, "ghs_123_") {
 		t.Fatalf("GH_TOKEN not injected: %+v", inj.Env)
 	}
 	if len(inj.ScrubValues) != 1 || inj.ScrubValues[0] != tok {
@@ -396,4 +444,120 @@ func TestGHPresetDeniesCodeExecSubcommands(t *testing.T) {
 			t.Errorf("expected %v to be allowed, denied by %q", args, p)
 		}
 	}
+}
+
+func TestParseGitHubAppFields_ClientIDOnly(t *testing.T) {
+	_, pemStr := testGitHubAppKey(t)
+	c, err := ParseGitHubAppFields(map[string]string{"client_id": "Iv23liAbC123", "private_key": pemStr, "owner": "gemsdevunited"})
+	if err != nil {
+		t.Fatalf("client-id-only credential rejected: %v", err)
+	}
+	if c.Issuer() != "Iv23liAbC123" {
+		t.Fatalf("issuer = %q", c.Issuer())
+	}
+	both, _ := ParseGitHubAppFields(map[string]string{"client_id": "Iv23liAbC123", "app_id": "123", "private_key": pemStr})
+	if both.Issuer() != "Iv23liAbC123" {
+		t.Fatal("client_id must win over app_id as JWT issuer")
+	}
+	f := c.NormalizedFields()
+	if _, ok := f["installation_id"]; ok {
+		t.Fatal("empty optional fields must not be stored")
+	}
+}
+
+func mintWith(t *testing.T, fields map[string]string) (string, error) {
+	t.Helper()
+	c, err := ParseGitHubAppFields(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return MintGitHubAppToken(context.Background(), "github.com", c)
+}
+
+func TestMintGitHubAppToken_ClientIDIssuerAutoResolvesSingleInstallation(t *testing.T) {
+	key, pemStr := testGitHubAppKey(t)
+	f := newFakeGitHubAppServer(t, &key.PublicKey, "Iv23liAbC123")
+	withGitHubAppTestServer(t, f)
+
+	tok, err := mintWith(t, map[string]string{"client_id": "Iv23liAbC123", "private_key": pemStr})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if len(tok) < 500 || !strings.HasPrefix(tok, "ghs_") {
+		t.Fatalf("stateless-format token not accepted intact: len=%d", len(tok))
+	}
+	if f.lastIss.Load() != "Iv23liAbC123" {
+		t.Fatalf("JWT iss = %v, want client id", f.lastIss.Load())
+	}
+	if f.lookups.Load() != 1 {
+		t.Fatalf("expected one installation lookup, got %d", f.lookups.Load())
+	}
+}
+
+func TestMintGitHubAppToken_OwnerLookupAndUserFallback(t *testing.T) {
+	key, pemStr := testGitHubAppKey(t)
+	f := newFakeGitHubAppServer(t, &key.PublicKey, "Iv1")
+	solo := githubAppInstallation{ID: 789}
+	solo.Account.Login = "solo-user"
+	f.installations = append(f.installations, solo)
+	f.liveIDs["789"] = true
+	withGitHubAppTestServer(t, f)
+
+	if _, err := mintWith(t, map[string]string{"client_id": "Iv1", "private_key": pemStr, "owner": "gemsdevunited"}); err != nil {
+		t.Fatalf("org owner lookup: %v", err)
+	}
+	if _, err := mintWith(t, map[string]string{"client_id": "Iv1", "private_key": pemStr, "owner": "solo-user"}); err != nil {
+		t.Fatalf("user fallback lookup: %v", err)
+	}
+	_, err := mintWith(t, map[string]string{"client_id": "Iv1", "private_key": pemStr, "owner": "not-installed"})
+	if err == nil || !strings.Contains(err.Error(), "not installed on \"not-installed\"") {
+		t.Fatalf("expected not-installed error, got %v", err)
+	}
+}
+
+func TestMintGitHubAppToken_MultipleInstallationsNeedOwner(t *testing.T) {
+	key, pemStr := testGitHubAppKey(t)
+	f := newFakeGitHubAppServer(t, &key.PublicKey, "Iv1")
+	other := githubAppInstallation{ID: 999}
+	other.Account.Login = "another-org"
+	f.installations = append(f.installations, other)
+	withGitHubAppTestServer(t, f)
+
+	_, err := mintWith(t, map[string]string{"client_id": "Iv1", "private_key": pemStr})
+	if err == nil || !strings.Contains(err.Error(), "another-org, gemsdevunited") || !strings.Contains(err.Error(), "set owner") {
+		t.Fatalf("expected ambiguity error listing owners, got %v", err)
+	}
+}
+
+func TestMintGitHubAppToken_ReinstallReResolves(t *testing.T) {
+	key, pemStr := testGitHubAppKey(t)
+	f := newFakeGitHubAppServer(t, &key.PublicKey, "Iv1")
+	withGitHubAppTestServer(t, f)
+	fields := map[string]string{"client_id": "Iv1", "private_key": pemStr, "owner": "gemsdevunited"}
+
+	if _, err := mintWith(t, fields); err != nil {
+		t.Fatal(err)
+	}
+	// App uninstalled + reinstalled → new installation id; old id now 404s.
+	f.mu.Lock()
+	f.installations[0].ID = 4567
+	f.liveIDs = map[string]bool{"4567": true}
+	f.mu.Unlock()
+	githubAppTokenCache = sync.Map{} // force a fresh mint; installation cache kept
+
+	if _, err := mintWith(t, fields); err != nil {
+		t.Fatalf("expected transparent re-resolve after reinstall, got %v", err)
+	}
+	if v, _ := githubAppInstallCache.Load(githubAppCacheKeyFor(t, fields)); v != "4567" {
+		t.Fatalf("installation cache not refreshed: %v", v)
+	}
+}
+
+func githubAppCacheKeyFor(t *testing.T, fields map[string]string) string {
+	t.Helper()
+	c, err := ParseGitHubAppFields(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return githubAppCacheKey("github.com", c)
 }

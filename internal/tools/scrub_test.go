@@ -1,6 +1,9 @@
 package tools
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestScrubCredentials_OpenAI(t *testing.T) {
 	input := "Found key: sk-abcdefghijklmnopqrstuvwxyz1234567890 in env"
@@ -40,6 +43,19 @@ func TestScrubCredentials_GitHub(t *testing.T) {
 	}
 }
 
+// GitHub's 2026 stateless installation tokens are ~520 chars `ghs_<APPID>_<JWT>`.
+// The whole token must be redacted, not just the first 40 chars.
+func TestScrubCredentials_GitHubStatelessToken(t *testing.T) {
+	jwtish := "eyJhbGciOiJSUzI1NiJ9." + strings.Repeat("abcDEF123-_", 40) + "." + strings.Repeat("XyZ789_-", 20)
+	for _, prefix := range []string{"ghs_", "ghu_"} {
+		tok := prefix + "123456_" + jwtish
+		got := ScrubCredentials("token " + tok + " done")
+		if got != "token [REDACTED] done" {
+			t.Errorf("%s stateless token not fully scrubbed: %q", prefix, got)
+		}
+	}
+}
+
 func TestScrubCredentials_AWS(t *testing.T) {
 	input := "aws_key: AKIAIOSFODNN7EXAMPLE"
 	got := ScrubCredentials(input)
@@ -74,10 +90,10 @@ func TestScrubCredentials_GenericKeyValue(t *testing.T) {
 func TestScrubCredentials_NoFalsePositive(t *testing.T) {
 	inputs := []string{
 		"hello world",
-		"sk-short",       // too short for OpenAI pattern
-		"ghp_tooshort",   // too short for GitHub pattern
+		"sk-short",     // too short for OpenAI pattern
+		"ghp_tooshort", // too short for GitHub pattern
 		"normal text with no secrets",
-		"AKIA1234",       // too short for AWS (needs 16 chars after AKIA)
+		"AKIA1234", // too short for AWS (needs 16 chars after AKIA)
 	}
 	for _, input := range inputs {
 		got := ScrubCredentials(input)

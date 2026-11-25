@@ -36,9 +36,18 @@ import (
 
 // GitHubAppCredential is the decoded `github_app` credential blob.
 type GitHubAppCredential struct {
-	AppID          string
+	// ClientID (e.g. "Iv23li…") is GitHub's recommended JWT issuer. AppID is
+	// the legacy numeric issuer, still accepted. At least one is required;
+	// ClientID wins when both are set.
+	ClientID string
+	AppID    string
+	// InstallationID is optional: when empty it is auto-resolved with the App
+	// JWT (via Owner, or the App's single installation) and cached.
 	InstallationID string
-	PrivateKeyPEM  string
+	// Owner is the org/user login the App is installed on; used only to
+	// resolve InstallationID when it is not given.
+	Owner         string
+	PrivateKeyPEM string
 	// Repositories optionally downscopes the token to these repo names.
 	Repositories []string
 	// Permissions optionally downscopes the token (e.g. contents=write).
@@ -47,8 +56,13 @@ type GitHubAppCredential struct {
 
 var (
 	errGitHubAppBlobEmpty       = errors.New("github app: credential blob is empty")
+	errGitHubAppIssuerMissing   = errors.New("github app: client_id (recommended) or app_id is required")
+	errGitHubAppClientIDInvalid = errors.New("github app: client_id has an invalid format")
 	errGitHubAppIDInvalid       = errors.New("github app: app_id must be a positive integer")
 	errGitHubAppInstallInvalid  = errors.New("github app: installation_id must be a positive integer")
+	errGitHubAppOwnerInvalid    = errors.New("github app: owner must be a valid GitHub org or user login")
+	githubAppClientIDRe         = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+	githubLoginRe               = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
 	errGitHubAppKeyMissing      = errors.New("github app: private_key is empty")
 	errGitHubAppKeyInvalid      = errors.New("github app: private_key is not a valid RSA private key PEM")
 	errGitHubAppRepoInvalid     = errors.New("github app: repositories contains an invalid repository name")
@@ -64,7 +78,8 @@ var (
 // shape is a flat string map so it round-trips through the same typed-credential
 // storage as pat/ssh_key:
 //
-//	{"app_id":"123","installation_id":"456","private_key":"-----BEGIN ...",
+//	{"client_id":"Iv23li...","private_key":"-----BEGIN ...",
+//	 "app_id":"123","installation_id":"456","owner":"my-org",          (all optional)
 //	 "repositories":"repo-a,repo-b","permissions":"contents:write,pull_requests:write"}
 func ParseGitHubAppBlob(blob []byte) (*GitHubAppCredential, error) {
 	if len(blob) == 0 {
@@ -81,15 +96,26 @@ func ParseGitHubAppBlob(blob []byte) (*GitHubAppCredential, error) {
 // by the HTTP save path (offline validation) and the runtime adapters.
 func ParseGitHubAppFields(m map[string]string) (*GitHubAppCredential, error) {
 	c := &GitHubAppCredential{
+		ClientID:       strings.TrimSpace(m["client_id"]),
 		AppID:          strings.TrimSpace(m["app_id"]),
 		InstallationID: strings.TrimSpace(m["installation_id"]),
+		Owner:          strings.TrimSpace(m["owner"]),
 		PrivateKeyPEM:  strings.ReplaceAll(strings.TrimSpace(m["private_key"]), "\r\n", "\n"),
 	}
-	if !isPositiveInt(c.AppID) {
+	if c.ClientID == "" && c.AppID == "" {
+		return nil, errGitHubAppIssuerMissing
+	}
+	if c.ClientID != "" && !githubAppClientIDRe.MatchString(c.ClientID) {
+		return nil, errGitHubAppClientIDInvalid
+	}
+	if c.AppID != "" && !isPositiveInt(c.AppID) {
 		return nil, errGitHubAppIDInvalid
 	}
-	if !isPositiveInt(c.InstallationID) {
+	if c.InstallationID != "" && !isPositiveInt(c.InstallationID) {
 		return nil, errGitHubAppInstallInvalid
+	}
+	if c.Owner != "" && !githubLoginRe.MatchString(c.Owner) {
+		return nil, errGitHubAppOwnerInvalid
 	}
 	if c.PrivateKeyPEM == "" {
 		return nil, errGitHubAppKeyMissing
@@ -119,10 +145,16 @@ func ParseGitHubAppFields(m map[string]string) (*GitHubAppCredential, error) {
 
 // NormalizedFields returns the canonical blob map written to storage.
 func (c *GitHubAppCredential) NormalizedFields() map[string]string {
-	m := map[string]string{
+	m := map[string]string{"private_key": c.PrivateKeyPEM}
+	for k, v := range map[string]string{
+		"client_id":       c.ClientID,
 		"app_id":          c.AppID,
 		"installation_id": c.InstallationID,
-		"private_key":     c.PrivateKeyPEM,
+		"owner":           c.Owner,
+	} {
+		if v != "" {
+			m[k] = v
+		}
 	}
 	if len(c.Repositories) > 0 {
 		m["repositories"] = strings.Join(c.Repositories, ",")
@@ -176,15 +208,24 @@ func parseGitHubAppPrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 	return rsaKey, nil
 }
 
-// githubAppJWT builds the App JWT GitHub expects: RS256, iss=app id,
-// iat backdated 60s for clock drift, exp 9 minutes out (max allowed is 10).
-func githubAppJWT(appID string, key *rsa.PrivateKey, now time.Time) (string, error) {
+// Issuer returns the JWT `iss` claim: client ID (GitHub's recommendation)
+// when set, otherwise the legacy numeric App ID.
+func (c *GitHubAppCredential) Issuer() string {
+	if c.ClientID != "" {
+		return c.ClientID
+	}
+	return c.AppID
+}
+
+// githubAppJWT builds the App JWT GitHub expects: RS256, iss=client id (or
+// app id), iat backdated 60s for clock drift, exp 9 minutes out (max is 10).
+func githubAppJWT(issuer string, key *rsa.PrivateKey, now time.Time) (string, error) {
 	enc := base64.RawURLEncoding
 	header := enc.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
 	claims, err := json.Marshal(map[string]any{
 		"iat": now.Add(-60 * time.Second).Unix(),
 		"exp": now.Add(9 * time.Minute).Unix(),
-		"iss": appID,
+		"iss": issuer,
 	})
 	if err != nil {
 		return "", err
@@ -223,13 +264,14 @@ type githubAppCachedToken struct {
 
 var (
 	githubAppTokenCache   sync.Map // cacheKey → githubAppCachedToken
+	githubAppInstallCache sync.Map // cacheKey → resolved installation id (string)
 	githubAppTokenFlights singleflight.Group
 )
 
 func githubAppCacheKey(host string, c *GitHubAppCredential) string {
 	h := sha256.New()
 	fields := c.NormalizedFields()
-	for _, k := range []string{"app_id", "installation_id", "private_key", "repositories", "permissions"} {
+	for _, k := range []string{"client_id", "app_id", "installation_id", "owner", "private_key", "repositories", "permissions"} {
 		h.Write([]byte(k + "=" + fields[k] + "\x00"))
 	}
 	h.Write([]byte("host=" + host))
@@ -258,7 +300,7 @@ func MintGitHubAppToken(ctx context.Context, host string, c *GitHubAppCredential
 		}
 		// Detach from the caller's cancellation so one cancelled exec doesn't
 		// fail every caller sharing this flight; the HTTP client timeout bounds it.
-		tok, err := requestGitHubAppToken(context.WithoutCancel(ctx), host, c)
+		tok, err := requestGitHubAppToken(context.WithoutCancel(ctx), host, key, c)
 		if err != nil {
 			return "", err
 		}
@@ -271,39 +313,47 @@ func MintGitHubAppToken(ctx context.Context, host string, c *GitHubAppCredential
 	return v.(string), nil
 }
 
-func requestGitHubAppToken(ctx context.Context, host string, c *GitHubAppCredential) (githubAppCachedToken, error) {
-	key, err := parseGitHubAppPrivateKey(c.PrivateKeyPEM)
+// githubAppAPIError is a non-2xx GitHub API response. Message is GitHub's
+// `message` field (never contains credential material).
+type githubAppAPIError struct {
+	op      string
+	status  int
+	message string
+}
+
+func (e *githubAppAPIError) Error() string {
+	return fmt.Sprintf("github app: %s failed (HTTP %d): %s", e.op, e.status, e.message)
+}
+
+func isGitHubAppNotFound(err error) bool {
+	var apiErr *githubAppAPIError
+	return errors.As(err, &apiErr) && apiErr.status == http.StatusNotFound
+}
+
+// githubAppDo performs one App-JWT-authenticated API call and decodes a 2xx
+// JSON body into out.
+func githubAppDo(ctx context.Context, op, method, url, jwt string, body []byte, out any) error {
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, rdr)
 	if err != nil {
-		return githubAppCachedToken{}, err
-	}
-	jwt, err := githubAppJWT(c.AppID, key, githubAppNow())
-	if err != nil {
-		return githubAppCachedToken{}, err
-	}
-	body := map[string]any{}
-	if len(c.Repositories) > 0 {
-		body["repositories"] = c.Repositories
-	}
-	if len(c.Permissions) > 0 {
-		body["permissions"] = c.Permissions
-	}
-	payload, _ := json.Marshal(body)
-	url := githubAPIBase(host) + "/app/installations/" + c.InstallationID + "/access_tokens"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return githubAppCachedToken{}, fmt.Errorf("github app: build request: %w", err)
+		return fmt.Errorf("github app: build %s request: %w", op, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := githubAppHTTPClient.Do(req)
 	if err != nil {
-		return githubAppCachedToken{}, fmt.Errorf("github app: request installation token: %w", err)
+		return fmt.Errorf("github app: %s: %w", op, err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		var apiErr struct {
 			Message string `json:"message"`
 		}
@@ -312,23 +362,120 @@ func requestGitHubAppToken(ctx context.Context, host string, c *GitHubAppCredent
 		if msg == "" {
 			msg = http.StatusText(resp.StatusCode)
 		}
-		return githubAppCachedToken{}, fmt.Errorf("github app: installation token request failed (HTTP %d): %s", resp.StatusCode, msg)
+		return &githubAppAPIError{op: op, status: resp.StatusCode, message: msg}
 	}
-	var out struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
+	if err := json.Unmarshal(respBody, out); err != nil {
+		return fmt.Errorf("github app: decode %s response: %w", op, err)
 	}
-	if err := json.Unmarshal(respBody, &out); err != nil {
-		return githubAppCachedToken{}, fmt.Errorf("github app: decode token response: %w", err)
+	return nil
+}
+
+type githubAppInstallation struct {
+	ID      int64 `json:"id"`
+	Account struct {
+		Login string `json:"login"`
+	} `json:"account"`
+}
+
+// resolveGitHubAppInstallation finds the installation id the way hosted
+// GitHub Apps do — with the App JWT, no org-settings access required:
+//   - owner set → GET /orgs/{owner}/installation, falling back to
+//     /users/{owner}/installation for personal accounts;
+//   - otherwise → GET /app/installations, which must contain exactly one.
+func resolveGitHubAppInstallation(ctx context.Context, base, jwt string, c *GitHubAppCredential) (string, error) {
+	var inst githubAppInstallation
+	if c.Owner != "" {
+		err := githubAppDo(ctx, "resolve installation for "+c.Owner, http.MethodGet, base+"/orgs/"+c.Owner+"/installation", jwt, nil, &inst)
+		if isGitHubAppNotFound(err) {
+			err = githubAppDo(ctx, "resolve installation for "+c.Owner, http.MethodGet, base+"/users/"+c.Owner+"/installation", jwt, nil, &inst)
+		}
+		if isGitHubAppNotFound(err) {
+			return "", fmt.Errorf("github app: the App is not installed on %q — install it on that org/user first", c.Owner)
+		}
+		if err != nil {
+			return "", err
+		}
+		return strconv.FormatInt(inst.ID, 10), nil
 	}
-	if out.Token == "" {
-		return githubAppCachedToken{}, errGitHubAppTokenMissing
+	var list []githubAppInstallation
+	if err := githubAppDo(ctx, "list installations", http.MethodGet, base+"/app/installations?per_page=100", jwt, nil, &list); err != nil {
+		return "", err
 	}
-	if err := validateTokenShape(out.Token); err != nil {
+	switch len(list) {
+	case 0:
+		return "", errors.New("github app: the App has no installations — install it on an org or user first")
+	case 1:
+		return strconv.FormatInt(list[0].ID, 10), nil
+	}
+	owners := make([]string, 0, len(list))
+	for _, it := range list {
+		owners = append(owners, it.Account.Login)
+	}
+	sort.Strings(owners)
+	return "", fmt.Errorf("github app: the App is installed on multiple accounts (%s) — set owner to pick one", strings.Join(owners, ", "))
+}
+
+// requestGitHubAppToken mints one installation access token. When the
+// installation id was auto-resolved and GitHub answers 404 (App uninstalled
+// and re-installed → new id), the cached id is dropped and resolution retried once.
+func requestGitHubAppToken(ctx context.Context, host, cacheKey string, c *GitHubAppCredential) (githubAppCachedToken, error) {
+	key, err := parseGitHubAppPrivateKey(c.PrivateKeyPEM)
+	if err != nil {
 		return githubAppCachedToken{}, err
 	}
-	if out.ExpiresAt.IsZero() {
-		out.ExpiresAt = githubAppNow().Add(55 * time.Minute)
+	jwt, err := githubAppJWT(c.Issuer(), key, githubAppNow())
+	if err != nil {
+		return githubAppCachedToken{}, err
 	}
-	return githubAppCachedToken{token: out.Token, expiresAt: out.ExpiresAt}, nil
+	base := githubAPIBase(host)
+
+	body := map[string]any{}
+	if len(c.Repositories) > 0 {
+		body["repositories"] = c.Repositories
+	}
+	if len(c.Permissions) > 0 {
+		body["permissions"] = c.Permissions
+	}
+	payload, _ := json.Marshal(body)
+
+	autoResolved := c.InstallationID == ""
+	for attempt := 0; ; attempt++ {
+		installationID := c.InstallationID
+		if autoResolved {
+			if v, ok := githubAppInstallCache.Load(cacheKey); ok {
+				installationID = v.(string)
+			} else {
+				id, err := resolveGitHubAppInstallation(ctx, base, jwt, c)
+				if err != nil {
+					return githubAppCachedToken{}, err
+				}
+				githubAppInstallCache.Store(cacheKey, id)
+				installationID = id
+			}
+		}
+
+		var out struct {
+			Token     string    `json:"token"`
+			ExpiresAt time.Time `json:"expires_at"`
+		}
+		err := githubAppDo(ctx, "installation token request", http.MethodPost,
+			base+"/app/installations/"+installationID+"/access_tokens", jwt, payload, &out)
+		if autoResolved && attempt == 0 && isGitHubAppNotFound(err) {
+			githubAppInstallCache.Delete(cacheKey)
+			continue
+		}
+		if err != nil {
+			return githubAppCachedToken{}, err
+		}
+		if out.Token == "" {
+			return githubAppCachedToken{}, errGitHubAppTokenMissing
+		}
+		if err := validateTokenShape(out.Token); err != nil {
+			return githubAppCachedToken{}, err
+		}
+		if out.ExpiresAt.IsZero() {
+			out.ExpiresAt = githubAppNow().Add(55 * time.Minute)
+		}
+		return githubAppCachedToken{token: out.Token, expiresAt: out.ExpiresAt}, nil
+	}
 }

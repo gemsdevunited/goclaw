@@ -21,9 +21,15 @@ export type GitCredentialType = "env" | "pat" | "ssh_key" | "github_app";
 
 /** Non-secret + secret inputs for a GitHub App installation credential. */
 export interface GitHubAppFields {
+  /** Recommended JWT issuer (e.g. "Iv23li…"). Either this or appId is required. */
+  clientId: string;
+  /** Legacy numeric issuer — optional when clientId is set. */
   appId: string;
-  installationId: string;
   privateKey: string;
+  /** Org/user the App is installed on — used to auto-resolve the installation. Optional. */
+  owner: string;
+  /** Optional: auto-resolved from owner (or the App's single installation) when empty. */
+  installationId: string;
   /** Optional comma-separated repo names to downscope the minted token. */
   repositories: string;
   /** Optional comma list of `name:read|write`, e.g. `contents:write,pull_requests:write`. */
@@ -31,9 +37,11 @@ export interface GitHubAppFields {
 }
 
 export const emptyGitHubAppFields: GitHubAppFields = {
+  clientId: "",
   appId: "",
-  installationId: "",
   privateKey: "",
+  owner: "",
+  installationId: "",
   repositories: "",
   permissions: "",
 };
@@ -222,27 +230,27 @@ export function CliCredentialGitFields({
           </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="gh-app-id">{t("userCredentials.githubAppId")}</Label>
+              <Label htmlFor="gh-app-client-id">{t("userCredentials.githubAppClientId")}</Label>
               <Input
-                id="gh-app-id"
-                data-testid="gh-app-id"
-                inputMode="numeric"
+                id="gh-app-client-id"
+                data-testid="gh-app-client-id"
                 autoComplete="off"
-                value={githubApp.appId}
-                onChange={(e) => setApp({ appId: e.target.value })}
-                placeholder={secretPlaceholder("123456")}
+                spellCheck={false}
+                value={githubApp.clientId}
+                onChange={(e) => setApp({ clientId: e.target.value })}
+                placeholder={secretPlaceholder("Iv23li…")}
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="gh-app-installation">{t("userCredentials.githubAppInstallationId")}</Label>
+              <Label htmlFor="gh-app-owner">{t("userCredentials.githubAppOwner")}</Label>
               <Input
-                id="gh-app-installation"
-                data-testid="gh-app-installation"
-                inputMode="numeric"
+                id="gh-app-owner"
+                data-testid="gh-app-owner"
                 autoComplete="off"
-                value={githubApp.installationId}
-                onChange={(e) => setApp({ installationId: e.target.value })}
-                placeholder={secretPlaceholder("78901234")}
+                spellCheck={false}
+                value={githubApp.owner}
+                onChange={(e) => setApp({ owner: e.target.value })}
+                placeholder={t("userCredentials.githubAppOwnerPlaceholder")}
               />
             </div>
           </div>
@@ -285,6 +293,32 @@ export function CliCredentialGitFields({
               placeholder="contents:write,pull_requests:write,issues:write"
             />
             <p className="text-xs text-muted-foreground">{t("userCredentials.githubAppScopeHint")}</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gh-app-id">{t("userCredentials.githubAppId")}</Label>
+              <Input
+                id="gh-app-id"
+                data-testid="gh-app-id"
+                inputMode="numeric"
+                autoComplete="off"
+                value={githubApp.appId}
+                onChange={(e) => setApp({ appId: e.target.value })}
+                placeholder="123456"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gh-app-installation">{t("userCredentials.githubAppInstallationId")}</Label>
+              <Input
+                id="gh-app-installation"
+                data-testid="gh-app-installation"
+                inputMode="numeric"
+                autoComplete="off"
+                value={githubApp.installationId}
+                onChange={(e) => setApp({ installationId: e.target.value })}
+                placeholder={t("userCredentials.githubAppInstallationPlaceholder")}
+              />
+            </div>
           </div>
           {githubAppError && (
             <p data-testid="gh-app-error" className="text-xs text-destructive">

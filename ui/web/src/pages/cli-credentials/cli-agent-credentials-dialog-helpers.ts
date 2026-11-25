@@ -53,25 +53,26 @@ export function buildTypedCredentialPayload(input: {
     return { kind: "typed", payload: { credential_type: "pat", host_scope: scope, blob: { token } } };
   }
   if (type === "github_app") {
-    const app = {
+    const app: Record<string, string> = {
+      client_id: githubApp?.clientId.trim() ?? "",
       app_id: githubApp?.appId.trim() ?? "",
-      installation_id: githubApp?.installationId.trim() ?? "",
       private_key: githubApp?.privateKey.trim() ?? "",
+      owner: githubApp?.owner.trim() ?? "",
+      installation_id: githubApp?.installationId.trim() ?? "",
       repositories: githubApp?.repositories.trim() ?? "",
       permissions: githubApp?.permissions.trim() ?? "",
     };
     const anyFilled = Object.values(app).some((v) => v !== "");
     if (!anyFilled && hasExistingSecret) return { kind: "no_change" };
-    if (!app.app_id || !app.installation_id || !app.private_key) {
+    // Private key + an issuer (client ID preferred, App ID legacy) are the only
+    // hard requirements; the installation is auto-resolved server-side.
+    if (!app.private_key || (!app.client_id && !app.app_id)) {
       return { kind: "error", errorKey: "git.cred_github_app_incomplete" };
     }
-    const blob: Record<string, string> = {
-      app_id: app.app_id,
-      installation_id: app.installation_id,
-      private_key: app.private_key,
-    };
-    if (app.repositories) blob.repositories = app.repositories;
-    if (app.permissions) blob.permissions = app.permissions;
+    const blob: Record<string, string> = {};
+    for (const [k, v] of Object.entries(app)) {
+      if (v) blob[k] = v;
+    }
     return { kind: "typed", payload: { credential_type: "github_app", host_scope: scope, blob } };
   }
   if (!privateKey.trim()) return hasExistingSecret ? { kind: "no_change" } : { kind: "error", errorKey: "git.cred_blob_missing_key" };
