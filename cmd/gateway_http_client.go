@@ -81,8 +81,6 @@ func gatewayHTTPDoRaw(method, path string, body any) ([]byte, int, error) {
 }
 
 func gatewayHTTPDoRawWithLimit(method, path string, body any, limit int64) ([]byte, int, error) {
-	base := resolveGatewayBaseURL()
-
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -92,19 +90,32 @@ func gatewayHTTPDoRawWithLimit(method, path string, body any, limit int64) ([]by
 		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequest(method, base+path, bodyReader)
+	req, err := newGatewayRequest(method, path, bodyReader, "application/json")
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	return doGatewayRequest(httpClient, req, limit)
+}
+
+// newGatewayRequest builds an authenticated request against the gateway base URL.
+func newGatewayRequest(method, path string, body io.Reader, contentType string) (*http.Request, error) {
+	req, err := http.NewRequest(method, resolveGatewayBaseURL()+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-GoClaw-User-Id", "system")
 	if token := resolveGatewayToken(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	return req, nil
+}
 
-	resp, err := httpClient.Do(req)
+// doGatewayRequest sends req with client and reads at most limit bytes of the body.
+func doGatewayRequest(client *http.Client, req *http.Request, limit int64) ([]byte, int, error) {
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("cannot reach gateway at %s: %w", base, err)
+		return nil, 0, fmt.Errorf("cannot reach gateway at %s: %w", resolveGatewayBaseURL(), err)
 	}
 	defer resp.Body.Close()
 
