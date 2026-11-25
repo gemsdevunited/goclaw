@@ -18,6 +18,7 @@ func agentCmd() *cobra.Command {
 	cmd.AddCommand(agentListCmd())
 	cmd.AddCommand(agentAddCmd())
 	cmd.AddCommand(agentUpdateCmd())
+	cmd.AddCommand(agentFilesCmd())
 	cmd.AddCommand(agentDeleteCmd())
 	cmd.AddCommand(agentChatCmd())
 	return cmd

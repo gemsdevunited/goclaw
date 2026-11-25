@@ -172,6 +172,10 @@ func (h *AgentsHandler) RegisterRoutes(mux *http.ServeMux) {
 	// if non-admin write paths are ever added or the endpoint is exposed via OAuth scopes.
 	mux.HandleFunc("PUT /v1/agents/{id}", h.adminMiddleware(h.handleUpdate))
 	mux.HandleFunc("DELETE /v1/agents/{id}", h.adminMiddleware(h.handleDelete))
+	// Agent-level context files (SOUL.md, IDENTITY.md, ...). Admin-only: they are system prompts.
+	mux.HandleFunc("GET /v1/agents/{id}/files", h.adminMiddleware(h.handleListAgentContextFiles))
+	mux.HandleFunc("GET /v1/agents/{id}/files/{name}", h.adminMiddleware(h.handleGetAgentContextFile))
+	mux.HandleFunc("PUT /v1/agents/{id}/files/{name}", h.adminMiddleware(h.handleSetAgentContextFile))
 	// Bulk operations (admin+)
 	mux.HandleFunc("POST /v1/agents/sync-workspace", h.adminMiddleware(h.handleSyncWorkspace))
 	// Sharing (admin+)

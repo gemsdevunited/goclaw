@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"strings"
@@ -41,7 +42,9 @@ func agentUpdateCmd() *cobra.Command {
 Only the flags you pass are sent. Use --set key=<json> for any other field
 allowed by the server (tools_config, other_config, subagents_config,
 compaction_config, memory_config, ... — values are parsed as JSON), or
---json-file to merge a whole JSON object.
+--json-file to merge a whole JSON object. Values that are not valid JSON are
+sent as plain strings; quote string values that look like JSON
+(e.g. --set 'model="123"').
 
 Examples:
   goclaw agent update gemie --model MiniMax-M3 --provider minimax-native
@@ -128,9 +131,7 @@ func buildAgentUpdateBody(cmd *cobra.Command, o agentUpdateOptions) (map[string]
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return nil, fmt.Errorf("--json-file must contain a JSON object: %w", err)
 		}
-		for k, v := range m {
-			body[k] = v
-		}
+		maps.Copy(body, m)
 	}
 	for _, p := range o.SetPairs {
 		k, v, ok := strings.Cut(p, "=")
