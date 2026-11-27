@@ -412,7 +412,10 @@ func (t *ExecTool) executeCredentialed(ctx context.Context, cred *store.SecureCL
 		"credential_user_id_present", store.CredentialUserIDFromContext(ctx) != "",
 		"env_keys", sortedKeys(envMap),
 	)
-	if missing := missingRequiredCredentialEnv(binary, envMap); len(missing) > 0 {
+	// Typed credentials (pat, github_app, ...) on an adapter-managed binary
+	// supply auth through the adapter, so the preset's legacy env requirement
+	// (e.g. GH_TOKEN) does not apply.
+	if missing := missingRequiredCredentialEnv(binary, envMap); len(missing) > 0 && !hasTypedEffectiveCredential(cred) {
 		slog.Warn("secure_cli.missing_required_env",
 			"binary", binary,
 			"agent_id", store.AgentIDFromContext(ctx),
@@ -459,7 +462,7 @@ func (t *ExecTool) executeCredentialed(ctx context.Context, cred *store.SecureCL
 	// the sandboxed process can't read. Reject early before any ephemerals
 	// would be created.
 	inSandbox := t.sandboxMgr != nil && sandboxKey != ""
-	if inSandbox && adapter.Name() != "passthrough" {
+	if inSandbox && adapter.Name() != "passthrough" && !isSandboxSafeAdapter(adapter) {
 		return ErrorResult(fmt.Sprintf("credentialed exec: %q adapter not supported in sandbox mode yet", adapter.Name()))
 	}
 
@@ -553,7 +556,7 @@ func validateAdapterCredentialReady(adapterName, binary string, cred *store.Secu
 		return credentialedGitCredentialResolutionError(binary, "no typed git credential selected")
 	}
 	switch strings.TrimSpace(*cred.CredentialType) {
-	case "pat", "ssh_key":
+	case "pat", "ssh_key", "github_app":
 		if cred.HostScope == nil || strings.TrimSpace(*cred.HostScope) == "" {
 			return credentialedGitCredentialResolutionError(binary, "typed git credential is missing host_scope")
 		}
@@ -606,6 +609,18 @@ func mergeCredentialedEnv(cred *store.SecureCLIBinary) (map[string]string, error
 		maps.Copy(envMap, userEnvMap)
 	}
 	return envMap, nil
+}
+
+// hasTypedEffectiveCredential reports whether runtime resolution selected a
+// typed (non-env) credential for an adapter-managed binary.
+func hasTypedEffectiveCredential(cred *store.SecureCLIBinary) bool {
+	if cred == nil || cred.AdapterName == nil || strings.TrimSpace(*cred.AdapterName) == "" {
+		return false
+	}
+	if cred.CredentialType != nil && !isEnvCredentialType(cred.CredentialType) {
+		return true
+	}
+	return cred.UserCredentialType != nil && !isEnvCredentialType(cred.UserCredentialType)
 }
 
 func isEnvCredentialType(typ *string) bool {

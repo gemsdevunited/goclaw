@@ -16,7 +16,7 @@ var schemaSQL string
 
 // SchemaVersion is the current SQLite schema version.
 // Bump this when adding new migration steps below.
-const SchemaVersion = 57
+const SchemaVersion = 58
 
 // migrations maps version → SQL to apply when upgrading FROM that version.
 // schema.sql always represents the LATEST full schema (for fresh DBs).
@@ -937,6 +937,15 @@ UPDATE mcp_servers
                    SELECT a.tenant_id FROM agents a WHERE a.id = channel_instances.agent_id
                )
         );`,
+	// Version 57 → 58: route existing gh secure CLI rows through the gh
+	// credential adapter (typed pat / github_app support). Mirrors PG
+	// migration 000094. No-op for legacy env creds; never overwrites an
+	// operator-chosen adapter.
+	57: `UPDATE secure_cli_binaries
+        SET adapter_name = 'gh',
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE binary_name = 'gh'
+        AND (adapter_name IS NULL OR adapter_name = '');`,
 }
 
 const addUsageEventAnalyticsTables = `

@@ -28,6 +28,7 @@ var gitKeys = []string{
 	MsgGitCredHostScopeInvalid,
 	MsgGitCredBlobMissingField,
 	MsgGitCredUnsupportedCredType,
+	MsgGitHubAppCredInvalid,
 }
 
 func TestI18nCatalogs_HasGitKeys(t *testing.T) {

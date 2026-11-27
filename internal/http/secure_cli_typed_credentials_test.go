@@ -9,8 +9,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -485,4 +488,97 @@ func base64Wrap(b []byte) string {
 		out.WriteString(s[i:end])
 	}
 	return out.String()
+}
+
+func testGitHubAppPEM(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+}
+
+func TestPutAgentCredential_GitHubAppPayload(t *testing.T) {
+	st := &recordingSecureCLIStore{}
+	h := newAgentCredentialTestHandler(st)
+	pemStr := testGitHubAppPEM(t)
+
+	rec := putAgentCred(t, h, uuid.New(), uuid.New(), map[string]any{
+		"credential_type": "github_app",
+		"host_scope":      "github.com",
+		"blob": map[string]string{
+			"app_id": "123", "installation_id": "456", "private_key": pemStr,
+			"repositories": "GemSFastify, GemsAdminFE", "permissions": "pull_requests:write,contents:write",
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if st.agentTypedCalls != 1 || st.lastAgentType == nil || *st.lastAgentType != "github_app" {
+		t.Fatalf("expected typed github_app write, got calls=%d type=%#v", st.agentTypedCalls, st.lastAgentType)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(st.lastAgentTypedEnv, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["app_id"] != "123" || got["installation_id"] != "456" || got["private_key"] == "" {
+		t.Fatalf("stored blob mismatch: %#v", got)
+	}
+	if got["repositories"] != "GemSFastify,GemsAdminFE" || got["permissions"] != "contents:write,pull_requests:write" {
+		t.Fatalf("stored scope not normalized: %#v", got)
+	}
+	if strings.Contains(rec.Body.String(), "PRIVATE KEY") {
+		t.Fatalf("response leaked key: %s", rec.Body.String())
+	}
+}
+
+func TestPutAgentCredential_GitHubAppInvalid(t *testing.T) {
+	cases := map[string]map[string]string{
+		"bad key":    {"app_id": "123", "installation_id": "456", "private_key": "nope"},
+		"bad app id": {"app_id": "x", "installation_id": "456", "private_key": testGitHubAppPEM(t)},
+	}
+	for name, blob := range cases {
+		t.Run(name, func(t *testing.T) {
+			st := &recordingSecureCLIStore{}
+			h := newAgentCredentialTestHandler(st)
+			rec := putAgentCred(t, h, uuid.New(), uuid.New(), map[string]any{
+				"credential_type": "github_app", "host_scope": "github.com", "blob": blob,
+			})
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "git.cred_github_app_invalid") {
+				t.Fatalf("missing error_key: %s", rec.Body.String())
+			}
+			if st.agentTypedCalls != 0 {
+				t.Fatal("invalid credential was stored")
+			}
+		})
+	}
+}
+
+func TestPutAgentCredential_GitHubAppClientIDOnly(t *testing.T) {
+	st := &recordingSecureCLIStore{}
+	h := newAgentCredentialTestHandler(st)
+	rec := putAgentCred(t, h, uuid.New(), uuid.New(), map[string]any{
+		"credential_type": "github_app",
+		"host_scope":      "github.com",
+		"blob": map[string]string{
+			"client_id": "Iv23liAbC123", "owner": "gemsdevunited", "private_key": testGitHubAppPEM(t),
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(st.lastAgentTypedEnv, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["client_id"] != "Iv23liAbC123" || got["owner"] != "gemsdevunited" {
+		t.Fatalf("stored blob mismatch: %#v", got)
+	}
+	if _, ok := got["installation_id"]; ok {
+		t.Fatalf("empty installation_id must not be stored: %#v", got)
+	}
 }

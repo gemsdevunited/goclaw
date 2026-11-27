@@ -12,7 +12,7 @@ export interface CLIEnvEntryResponse {
 }
 
 export type CLIEnvPayload = Record<string, string | CLIEnvEntryInput>;
-export type CLIGitCredentialType = "env" | "pat" | "ssh_key";
+export type CLIGitCredentialType = "env" | "pat" | "ssh_key" | "github_app";
 
 export interface SecureCLIBinary {
   id: string;

@@ -15,12 +15,7 @@ import (
 
 // allowedAgentFiles is the list of files exposed via agents.files.* RPCs.
 // TOOLS.md excluded — not applicable.
-var allowedAgentFiles = []string{
-	bootstrap.AgentsFile, bootstrap.SoulFile, bootstrap.IdentityFile,
-	bootstrap.UserFile, bootstrap.UserPredefinedFile, bootstrap.CapabilitiesFile,
-	bootstrap.BootstrapFile, bootstrap.MemoryJSONFile,
-	bootstrap.HeartbeatFile,
-}
+var allowedAgentFiles = bootstrap.AgentEditableFiles
 
 // --- agents.files.list ---
 // Matching TS src/gateway/server-methods/agents.ts:399-422

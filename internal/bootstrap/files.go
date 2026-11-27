@@ -210,3 +210,12 @@ func loadFile(dir, name string) File {
 	}
 	return File{Name: name, Path: path, Content: string(data), Missing: false}
 }
+
+// AgentEditableFiles lists the agent-level context files exposed to operators
+// via agents.files.* RPCs and /v1/agents/{id}/files. TOOLS.md is excluded.
+var AgentEditableFiles = []string{
+	AgentsFile, SoulFile, IdentityFile,
+	UserFile, UserPredefinedFile, CapabilitiesFile,
+	BootstrapFile, MemoryJSONFile,
+	HeartbeatFile,
+}

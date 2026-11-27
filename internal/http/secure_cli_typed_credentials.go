@@ -64,7 +64,7 @@ func prepareTypedCredentialEnv(ctx context.Context, locale string, body typedCre
 	}
 
 	credType := *body.CredentialType
-	if credType != "pat" && credType != "ssh_key" {
+	if credType != "pat" && credType != "ssh_key" && credType != "github_app" {
 		return nil, nil, nil, &errTypedCredential{
 			status:   http.StatusBadRequest,
 			msg:      i18n.T(locale, i18n.MsgGitCredUnsupportedCredType, credType),
@@ -142,6 +142,21 @@ func prepareTypedCredentialEnv(ctx context.Context, locale string, body typedCre
 			}
 		}
 		envBytes, _ := json.Marshal(map[string]string{"key": key})
+		ct := credType
+		return envBytes, &ct, &scope, nil
+
+	case "github_app":
+		// Offline validation only (IDs, RSA PEM, scope shape). Minting is
+		// deferred to exec time so saving never makes outbound calls.
+		app, err := tools.ParseGitHubAppFields(blob)
+		if err != nil {
+			return nil, nil, nil, &errTypedCredential{
+				status:   http.StatusBadRequest,
+				msg:      i18n.T(locale, i18n.MsgGitHubAppCredInvalid, err.Error()),
+				errorKey: "git.cred_github_app_invalid",
+			}
+		}
+		envBytes, _ := json.Marshal(app.NormalizedFields())
 		ct := credType
 		return envBytes, &ct, &scope, nil
 	}

@@ -343,6 +343,7 @@ func init() {
 		MsgGitCredHostScopeInvalid:         "host_scope %q không phải là tên máy chủ hợp lệ",
 		MsgGitCredBlobMissingField:         "blob credential thiếu trường bắt buộc %q",
 		MsgGitCredUnsupportedCredType:      "credential_type %q không được hỗ trợ",
+		MsgGitHubAppCredInvalid:            "Thông tin GitHub App không hợp lệ: %s",
 
 		// Message tool cross-target forward notice
 		MessageCrossTargetForwarded: "📤 Đã forward sang %s theo yêu cầu: %q",

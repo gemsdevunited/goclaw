@@ -18,6 +18,7 @@ export function CliAgentCredentialList({ entries, agentNameMap, deleting, onEdit
   const credentialLabel = (entry: CLIAgentCredential) => {
     if (entry.credential_type === "pat") return t("userCredentials.credentialTypePAT");
     if (entry.credential_type === "ssh_key") return t("userCredentials.credentialTypeSSH");
+    if (entry.credential_type === "github_app") return t("userCredentials.credentialTypeGitHubApp");
     return entry.has_secret ? "env" : t("userCredentials.noSecret");
   };
 

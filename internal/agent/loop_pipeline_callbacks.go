@@ -403,6 +403,13 @@ func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx c
 			opts = append(opts, withProvider(provider.Name()))
 		}
 		spanID := l.emitLLMSpanStart(ctx, start, state.Iteration+1, chatReq.Messages, opts...)
+		// Providers that run their own loop (Claude CLI) report each inner
+		// turn / tool call as a child span of this one. Others ignore it.
+		if spanID != uuid.Nil && provider != nil {
+			if obs := l.newNestedSpanObserver(ctx, spanID, provider.Name()); obs != nil {
+				ctx = providers.WithNestedTraceObserver(ctx, obs)
+			}
+		}
 		recordUsageCapAttempt := func(reservation *usagecaps.Reservation) {
 			if reservation != nil {
 				opts = append(opts, withUsageCapMetadata(reservation.TraceMetadata()))

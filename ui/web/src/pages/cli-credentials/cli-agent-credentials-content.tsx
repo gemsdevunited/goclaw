@@ -12,7 +12,13 @@ import {
   buildAgentCredentialPayload,
   entriesFromEnv,
 } from "./cli-agent-credentials-dialog-helpers";
-import { type GitCredentialType } from "./cli-credential-git-fields";
+import {
+  coerceCredentialType,
+  emptyGitHubAppFields,
+  typedCredentialTypesFor,
+  type GitCredentialType,
+  type GitHubAppFields,
+} from "./cli-credential-git-fields";
 import { useCliAgentCredentials, type CLIAgentCredential } from "./hooks/use-cli-agent-credentials";
 import type { SecureCLIBinary } from "./hooks/use-cli-credentials";
 
@@ -28,7 +34,8 @@ export function CLIAgentCredentialsContent({ binary, onClose }: Props) {
   const { t: tc } = useTranslation("common");
   const { agents } = useAgents();
   const { agentCredentials, loading, getCredential, setCredential, deleteCredential } = useCliAgentCredentials(binary.id);
-  const isGit = binary.adapter_name === "git";
+  const typedTypes = typedCredentialTypesFor(binary.adapter_name);
+  const isGit = typedTypes !== null;
 
   const [view, setView] = useState<ViewState>("list");
   const [editEntry, setEditEntry] = useState<CLIAgentCredential | null>(null);
@@ -40,6 +47,7 @@ export function CLIAgentCredentialsContent({ binary, onClose }: Props) {
   const [gitHostScope, setGitHostScope] = useState("github.com");
   const [gitToken, setGitToken] = useState("");
   const [gitPrivateKey, setGitPrivateKey] = useState("");
+  const [githubApp, setGithubApp] = useState<GitHubAppFields>(emptyGitHubAppFields);
   const [gitErrorKey, setGitErrorKey] = useState<string | undefined>();
   const [gitHasExistingSecret, setGitHasExistingSecret] = useState(false);
 
@@ -57,6 +65,7 @@ export function CLIAgentCredentialsContent({ binary, onClose }: Props) {
     setGitHostScope(isGit ? "github.com" : "");
     setGitToken("");
     setGitPrivateKey("");
+    setGithubApp(emptyGitHubAppFields);
     setGitErrorKey(undefined);
     setGitHasExistingSecret(false);
   };
@@ -79,13 +88,13 @@ export function CLIAgentCredentialsContent({ binary, onClose }: Props) {
     try {
       const res = await getCredential(entry.agent_id);
       setEnvEntries(entriesFromEnv(res.env));
-      if (isGit) {
-        const nextType = (res.credential_type ?? "env") as GitCredentialType;
-        setGitType(nextType === "pat" || nextType === "ssh_key" ? nextType : "env");
+      if (typedTypes) {
+        setGitType(coerceCredentialType(res.credential_type, typedTypes));
         setGitHostScope(res.host_scope ?? "github.com");
         setGitHasExistingSecret(!!res.has_secret);
         setGitToken("");
         setGitPrivateKey("");
+        setGithubApp(emptyGitHubAppFields);
       }
     } catch {
       setEnvEntries([]);
@@ -96,11 +105,12 @@ export function CLIAgentCredentialsContent({ binary, onClose }: Props) {
     if (!agentId) return;
     setGitErrorKey(undefined);
     const result = buildAgentCredentialPayload({
-      isGit,
+      isTyped: isGit,
       type: gitType,
       hostScope: gitHostScope,
       token: gitToken,
       privateKey: gitPrivateKey,
+      githubApp,
       hasExistingSecret: gitHasExistingSecret,
       envEntries,
       isNewEntry: editEntry === null,
@@ -170,6 +180,8 @@ export function CLIAgentCredentialsContent({ binary, onClose }: Props) {
             setGitToken={setGitToken}
             gitPrivateKey={gitPrivateKey}
             setGitPrivateKey={setGitPrivateKey}
+            githubApp={githubApp}
+            setGithubApp={setGithubApp}
             gitErrorKey={gitErrorKey}
             gitHasExistingSecret={gitHasExistingSecret}
           />

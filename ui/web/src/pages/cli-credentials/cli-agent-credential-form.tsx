@@ -5,7 +5,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { CliCredentialEnvVarsSection, type ManualEnvEntry } from "./cli-credential-env-vars-section";
-import { CliCredentialGitFields, type GitCredentialType } from "./cli-credential-git-fields";
+import {
+  CliCredentialGitFields,
+  typedCredentialTypesFor,
+  type GitCredentialType,
+  type GitHubAppFields,
+} from "./cli-credential-git-fields";
 import type { AgentData } from "@/types/agent";
 import type { SecureCLIBinary } from "./hooks/use-cli-credentials";
 
@@ -25,13 +30,16 @@ interface Props {
   setGitToken: (v: string) => void;
   gitPrivateKey: string;
   setGitPrivateKey: (v: string) => void;
+  githubApp: GitHubAppFields;
+  setGithubApp: (v: GitHubAppFields) => void;
   gitErrorKey?: string;
   gitHasExistingSecret: boolean;
 }
 
 export function CliAgentCredentialForm(props: Props) {
   const { t } = useTranslation("cli-credentials");
-  const isGit = props.binary.adapter_name === "git";
+  const typedTypes = typedCredentialTypesFor(props.binary.adapter_name);
+  const isGit = typedTypes !== null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -55,6 +63,9 @@ export function CliAgentCredentialForm(props: Props) {
         <CliCredentialGitFields
           type={props.gitType}
           onTypeChange={props.setGitType}
+          allowedTypes={typedTypes ?? undefined}
+          githubApp={props.githubApp}
+          onGitHubAppChange={props.setGithubApp}
           hostScope={props.gitHostScope}
           onHostScopeChange={props.setGitHostScope}
           token={props.gitToken}

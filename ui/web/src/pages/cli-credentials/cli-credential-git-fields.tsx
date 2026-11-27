@@ -17,11 +17,61 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-export type GitCredentialType = "env" | "pat" | "ssh_key";
+export type GitCredentialType = "env" | "pat" | "ssh_key" | "github_app";
+
+/** Non-secret + secret inputs for a GitHub App installation credential. */
+export interface GitHubAppFields {
+  /** Recommended JWT issuer (e.g. "Iv23li…"). Either this or appId is required. */
+  clientId: string;
+  /** Legacy numeric issuer — optional when clientId is set. */
+  appId: string;
+  privateKey: string;
+  /** Org/user the App is installed on — used to auto-resolve the installation. Optional. */
+  owner: string;
+  /** Optional: auto-resolved from owner (or the App's single installation) when empty. */
+  installationId: string;
+  /** Optional comma-separated repo names to downscope the minted token. */
+  repositories: string;
+  /** Optional comma list of `name:read|write`, e.g. `contents:write,pull_requests:write`. */
+  permissions: string;
+}
+
+export const emptyGitHubAppFields: GitHubAppFields = {
+  clientId: "",
+  appId: "",
+  privateKey: "",
+  owner: "",
+  installationId: "",
+  repositories: "",
+  permissions: "",
+};
+
+/** Typed credential types each adapter accepts (mirrors backend CLIPreset.CredentialTypes).
+ * Returns null for passthrough binaries, which only support legacy env vars. */
+export function typedCredentialTypesFor(adapterName?: string | null): GitCredentialType[] | null {
+  switch (adapterName) {
+    case "git":
+      return ["env", "pat", "ssh_key", "github_app"];
+    case "gh":
+      return ["env", "pat", "github_app"];
+    default:
+      return null;
+  }
+}
+
+/** Coerce a stored credential_type into one the adapter's form supports. */
+export function coerceCredentialType(raw: string | null | undefined, allowed: GitCredentialType[]): GitCredentialType {
+  const v = (raw ?? "env") as GitCredentialType;
+  return allowed.includes(v) ? v : "env";
+}
 
 export interface CliCredentialGitFieldsProps {
   type: GitCredentialType;
   onTypeChange: (t: GitCredentialType) => void;
+  /** Types offered in the picker. Defaults to the git adapter set. */
+  allowedTypes?: GitCredentialType[];
+  githubApp: GitHubAppFields;
+  onGitHubAppChange: (v: GitHubAppFields) => void;
   hostScope: string;
   onHostScopeChange: (v: string) => void;
   token: string;
@@ -37,6 +87,9 @@ export interface CliCredentialGitFieldsProps {
 export function CliCredentialGitFields({
   type,
   onTypeChange,
+  allowedTypes = ["env", "pat", "ssh_key", "github_app"],
+  githubApp,
+  onGitHubAppChange,
   hostScope,
   onHostScopeChange,
   token,
@@ -53,6 +106,7 @@ export function CliCredentialGitFields({
   useEffect(() => {
     onTokenChange("");
     onPrivateKeyChange("");
+    onGitHubAppChange(emptyGitHubAppFields);
     // intentionally only depend on `type` — the setters are stable across renders
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
@@ -61,6 +115,17 @@ export function CliCredentialGitFields({
   const sshKeyError = errorKey === "git.cred_ssh_key_invalid";
   const hostScopeError =
     errorKey === "git.cred_host_scope_required" || errorKey === "git.cred_host_scope_invalid";
+  const githubAppError =
+    errorKey === "git.cred_github_app_invalid" || errorKey === "git.cred_github_app_incomplete";
+  const typeLabels: Record<GitCredentialType, string> = {
+    env: t("userCredentials.credentialTypeEnv"),
+    pat: t("userCredentials.credentialTypePAT"),
+    ssh_key: t("userCredentials.credentialTypeSSH"),
+    github_app: t("userCredentials.credentialTypeGitHubApp"),
+  };
+  const setApp = (patch: Partial<GitHubAppFields>) => onGitHubAppChange({ ...githubApp, ...patch });
+  const secretPlaceholder = (fallback: string) =>
+    hasExistingSecret ? t("userCredentials.secretMasked") : fallback;
 
   return (
     <div data-testid="git-credential-fields" className="flex flex-col gap-3">
@@ -73,9 +138,9 @@ export function CliCredentialGitFields({
           onChange={(e) => onTypeChange(e.target.value as GitCredentialType)}
           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base md:text-sm shadow-xs"
         >
-          <option value="env">{t("userCredentials.credentialTypeEnv")}</option>
-          <option value="pat">{t("userCredentials.credentialTypePAT")}</option>
-          <option value="ssh_key">{t("userCredentials.credentialTypeSSH")}</option>
+          {allowedTypes.map((v) => (
+            <option key={v} value={v}>{typeLabels[v]}</option>
+          ))}
         </select>
       </div>
 
@@ -153,6 +218,113 @@ export function CliCredentialGitFields({
           {sshKeyError && !passphraseError && (
             <p data-testid="git-cred-ssh-key-error" className="text-xs text-destructive">
               {t("userCredentials.sshKeyInvalid")}
+            </p>
+          )}
+        </div>
+      )}
+
+      {type === "github_app" && (
+        <div data-testid="github-app-fields" className="flex flex-col gap-3">
+          <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            {t("userCredentials.githubAppHint")}
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gh-app-client-id">{t("userCredentials.githubAppClientId")}</Label>
+              <Input
+                id="gh-app-client-id"
+                data-testid="gh-app-client-id"
+                autoComplete="off"
+                spellCheck={false}
+                value={githubApp.clientId}
+                onChange={(e) => setApp({ clientId: e.target.value })}
+                placeholder={secretPlaceholder("Iv23li…")}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gh-app-owner">{t("userCredentials.githubAppOwner")}</Label>
+              <Input
+                id="gh-app-owner"
+                data-testid="gh-app-owner"
+                autoComplete="off"
+                spellCheck={false}
+                value={githubApp.owner}
+                onChange={(e) => setApp({ owner: e.target.value })}
+                placeholder={t("userCredentials.githubAppOwnerPlaceholder")}
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="gh-app-key">{t("userCredentials.githubAppPrivateKey")}</Label>
+            <Textarea
+              id="gh-app-key"
+              data-testid="gh-app-key"
+              rows={8}
+              spellCheck={false}
+              autoComplete="off"
+              value={githubApp.privateKey}
+              onChange={(e) => setApp({ privateKey: e.target.value })}
+              placeholder={secretPlaceholder("-----BEGIN RSA PRIVATE KEY-----")}
+              aria-invalid={githubAppError}
+              className="font-mono text-base md:text-xs"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="gh-app-repos">{t("userCredentials.githubAppRepositories")}</Label>
+            <Input
+              id="gh-app-repos"
+              data-testid="gh-app-repos"
+              autoComplete="off"
+              spellCheck={false}
+              value={githubApp.repositories}
+              onChange={(e) => setApp({ repositories: e.target.value })}
+              placeholder={t("userCredentials.githubAppRepositoriesPlaceholder")}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="gh-app-perms">{t("userCredentials.githubAppPermissions")}</Label>
+            <Input
+              id="gh-app-perms"
+              data-testid="gh-app-perms"
+              autoComplete="off"
+              spellCheck={false}
+              value={githubApp.permissions}
+              onChange={(e) => setApp({ permissions: e.target.value })}
+              placeholder="contents:write,pull_requests:write,issues:write"
+            />
+            <p className="text-xs text-muted-foreground">{t("userCredentials.githubAppScopeHint")}</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gh-app-id">{t("userCredentials.githubAppId")}</Label>
+              <Input
+                id="gh-app-id"
+                data-testid="gh-app-id"
+                inputMode="numeric"
+                autoComplete="off"
+                value={githubApp.appId}
+                onChange={(e) => setApp({ appId: e.target.value })}
+                placeholder="123456"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gh-app-installation">{t("userCredentials.githubAppInstallationId")}</Label>
+              <Input
+                id="gh-app-installation"
+                data-testid="gh-app-installation"
+                inputMode="numeric"
+                autoComplete="off"
+                value={githubApp.installationId}
+                onChange={(e) => setApp({ installationId: e.target.value })}
+                placeholder={t("userCredentials.githubAppInstallationPlaceholder")}
+              />
+            </div>
+          </div>
+          {githubAppError && (
+            <p data-testid="gh-app-error" className="text-xs text-destructive">
+              {errorKey === "git.cred_github_app_incomplete"
+                ? t("userCredentials.githubAppIncomplete")
+                : t("userCredentials.githubAppInvalid")}
             </p>
           )}
         </div>

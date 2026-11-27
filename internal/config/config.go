@@ -348,12 +348,12 @@ type MemoryFlushConfig struct {
 // ContextPruningConfig configures in-memory context pruning of old tool results.
 // Matches TS openclaw/src/agents/pi-hooks/context-pruning/settings.ts.
 //
-// Mode "" (default) or "off" → pruning disabled, zero overhead.
-// Mode "cache-ttl" → prune eligible tool results when ratio exceeds softTrimRatio,
-//
-//	gated by provider prompt-cache TTL (see PruneStage).
+// Mode "" (default) or "cache-ttl" → pruning ENABLED: prune eligible tool
+// results when ratio exceeds softTrimRatio, gated by provider prompt-cache TTL
+// (see PruneStage and agent.defaultPruningMode).
+// Mode "off" → pruning disabled, zero overhead.
 type ContextPruningConfig struct {
-	Mode                 string                   `json:"mode,omitempty"`                 // "" (default off), "off", "cache-ttl"
+	Mode                 string                   `json:"mode,omitempty"`                 // "" (default = cache-ttl, enabled), "cache-ttl", "off"
 	TTL                  string                   `json:"ttl,omitempty"`                  // cache TTL gate duration (default "5m"), Go duration string e.g. "5m", "30s"
 	KeepLastAssistants   int                      `json:"keepLastAssistants,omitempty"`   // protect last N assistant msgs (default 3)
 	SoftTrimRatio        float64                  `json:"softTrimRatio,omitempty"`        // start soft trim at this % of window (default 0.3)
@@ -365,9 +365,9 @@ type ContextPruningConfig struct {
 
 // ContextPruningSoftTrim configures how long tool results are trimmed.
 type ContextPruningSoftTrim struct {
-	MaxChars  int `json:"maxChars,omitempty"`  // tool results longer than this get trimmed (default 4000)
-	HeadChars int `json:"headChars,omitempty"` // keep first N chars (default 1500)
-	TailChars int `json:"tailChars,omitempty"` // keep last N chars (default 1500)
+	MaxChars  int `json:"maxChars,omitempty"`  // tool results longer than this get trimmed (default 6000)
+	HeadChars int `json:"headChars,omitempty"` // keep first N chars (default 3000)
+	TailChars int `json:"tailChars,omitempty"` // keep last N chars (default 3000)
 }
 
 // ContextPruningHardClear configures replacement of old tool results.
