@@ -86,7 +86,7 @@ func (h *UsageHandler) queryLiveSpanTotals(r *http.Request, from, to time.Time, 
 		COALESCE(SUM(COALESCE(s.input_tokens, 0)), 0),
 		COALESCE(SUM(COALESCE(s.output_tokens, 0)), 0),
 		COALESCE(SUM(COALESCE(s.total_cost, 0)), 0),
-		COUNT(*) FILTER (WHERE s.span_type = 'llm_call'),
+		COUNT(*) FILTER (WHERE s.span_type = 'llm_call' AND CAST(COALESCE(NULLIF(s.metadata->'provider_run'->>'nested_llm_calls', ''), '0') AS INTEGER) = 0),
 		COALESCE(SUM(CAST(COALESCE(NULLIF(s.metadata->>'cache_read_tokens', ''), '0') AS INTEGER)), 0),
 		COALESCE(SUM(CAST(COALESCE(NULLIF(s.metadata->>'cache_creation_tokens', ''), '0') AS INTEGER)), 0),
 		COALESCE(SUM(CAST(COALESCE(NULLIF(s.metadata->>'thinking_tokens', ''), '0') AS INTEGER)), 0)

@@ -173,3 +173,84 @@ func TestPGTracingStoreReconcileTraceUsageAggregatesIncludesToolUsageTokens(t *t
 			inputTokens, outputTokens, traceCost, spanCount, llmCalls, toolCalls)
 	}
 }
+
+// A claude-cli wrapper llm_call span carries provider_run metadata: it is
+// not an API call (left out of llm_call_count) and its zero remainder cost is
+// real (the CLI reported the run cost), so backfill must not price it.
+func TestPGTracingStoreProviderRunWrapperNotCountedOrBackfilled(t *testing.T) {
+	db := hooksTestDB(t)
+	tenantID, agentID := seedTenantAndAgent(t, db)
+	traceID := uuid.Must(uuid.NewV7())
+	wrapperID := uuid.Must(uuid.NewV7())
+	childID := uuid.Must(uuid.NewV7())
+	start := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	model := "claude-wrapper-test-model"
+
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM spans WHERE id IN ($1,$2)`, wrapperID, childID)
+		db.Exec(`DELETE FROM traces WHERE id=$1`, traceID)
+		db.Exec(`DELETE FROM usage_pricing_catalog WHERE model_id=$1`, "anthropic/"+model)
+	})
+
+	price := "0.00001"
+	if _, err := NewPGUsageCapStore(db).UpsertPricingCatalog(context.Background(), []store.UsagePricingCatalogEntry{{
+		ModelID:          "anthropic/" + model,
+		CanonicalModelID: "anthropic/" + model,
+		Pricing:          store.UsagePricingFields{Input: &price, Output: &price, CacheRead: &price, CacheWrite: &price},
+		SyncedAt:         time.Now().UTC(),
+	}}); err != nil {
+		t.Fatalf("upsert pricing catalog: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO traces (id, tenant_id, agent_id, start_time, created_at, status)
+		 VALUES ($1,$2,$3,$4,$4,'completed')`,
+		traceID, tenantID, agentID, start,
+	); err != nil {
+		t.Fatalf("insert trace: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO spans (
+			id, trace_id, parent_span_id, tenant_id, agent_id, span_type, start_time, created_at, status,
+			provider, model, input_tokens, output_tokens, total_cost, metadata
+		) VALUES
+			($1,$3,NULL,$4,$5,'llm_call',$6,$6,'completed','anthropic',$7,0,400,0,
+			 '{"provider_run":{"nested_llm_calls":1,"nested_tool_calls":0,"cost_usd":0.5}}'::jsonb),
+			($2,$3,$1,$4,$5,'llm_call',$6,$6,'completed','anthropic',$7,10,25,0.5,
+			 '{"nested_source":"claude_cli","cache_read_tokens":1000}'::jsonb)`,
+		wrapperID, childID, traceID, tenantID, agentID, start, model,
+	); err != nil {
+		t.Fatalf("insert spans: %v", err)
+	}
+
+	ts := NewPGTracingStore(db)
+	if _, err := ts.BackfillLLMCosts(context.Background()); err != nil {
+		t.Fatalf("BackfillLLMCosts: %v", err)
+	}
+	var wrapperCost float64
+	if err := db.QueryRow(`SELECT COALESCE(total_cost,0) FROM spans WHERE id=$1`, wrapperID).Scan(&wrapperCost); err != nil {
+		t.Fatalf("query wrapper cost: %v", err)
+	}
+	if wrapperCost != 0 {
+		t.Fatalf("wrapper span was backfilled: cost %.8f", wrapperCost)
+	}
+
+	check := func(label string) {
+		t.Helper()
+		var llmCalls, outputTokens int
+		var cost float64
+		if err := db.QueryRow(`SELECT llm_call_count, total_output_tokens, total_cost FROM traces WHERE id=$1`, traceID).Scan(&llmCalls, &outputTokens, &cost); err != nil {
+			t.Fatalf("%s: query trace: %v", label, err)
+		}
+		if llmCalls != 1 || outputTokens != 425 || math.Abs(cost-0.5) > 1e-9 {
+			t.Fatalf("%s: trace = llm %d output %d cost %v, want 1/425/0.5", label, llmCalls, outputTokens, cost)
+		}
+	}
+	if err := ts.BatchUpdateTraceAggregates(context.Background(), traceID); err != nil {
+		t.Fatalf("BatchUpdateTraceAggregates: %v", err)
+	}
+	check("batch update")
+	if _, err := ts.ReconcileTraceUsageAggregates(context.Background()); err != nil {
+		t.Fatalf("ReconcileTraceUsageAggregates: %v", err)
+	}
+	check("reconcile")
+}

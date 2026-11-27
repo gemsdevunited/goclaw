@@ -148,3 +148,56 @@ func createSessionCostTrace(t *testing.T, traces *SQLiteTracingStore, ctx contex
 	}
 	return id
 }
+
+// A claude-cli wrapper llm_call span (metadata.provider_run.nested_llm_calls
+// > 0) is not an API call: it is left out of llm_call_count, but its
+// remainder tokens and cost still count.
+func TestSQLiteTracingStoreBatchUpdateTraceAggregatesSkipsProviderRunWrapper(t *testing.T) {
+	db := openTestDB(t)
+	if err := EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
+	traces := NewSQLiteTracingStore(db)
+	tenantID := uuid.Must(uuid.NewV7())
+	insertSessionCostTenant(t, db, tenantID, "tenant-nested-wrapper")
+	ctx := store.WithTenantID(context.Background(), tenantID)
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	traceID := createSessionCostTrace(t, traces, ctx, "session-a", nil, 0, now)
+
+	wrapperID := uuid.Must(uuid.NewV7())
+	spans := []struct {
+		id     uuid.UUID
+		parent *uuid.UUID
+		out    int
+		cost   float64
+		meta   string
+	}{
+		{wrapperID, nil, 30, 0.05, `{"provider_run":{"nested_llm_calls":2,"nested_tool_calls":1,"cost_usd":0.45}}`},
+		{uuid.Must(uuid.NewV7()), &wrapperID, 100, 0.3, `{"nested_source":"claude_cli","cache_read_tokens":1000}`},
+		{uuid.Must(uuid.NewV7()), &wrapperID, 20, 0.1, `{"nested_source":"claude_cli"}`},
+	}
+	for _, sp := range spans {
+		cost := sp.cost
+		if err := traces.CreateSpan(ctx, &store.SpanData{
+			ID: sp.id, TraceID: traceID, ParentSpanID: sp.parent, SpanType: store.SpanTypeLLMCall,
+			StartTime: now, Status: store.SpanStatusCompleted, Provider: "claudecode", Model: "opus",
+			OutputTokens: sp.out, TotalCost: &cost, Metadata: []byte(sp.meta), CreatedAt: now,
+		}); err != nil {
+			t.Fatalf("CreateSpan: %v", err)
+		}
+		if err := traces.UpdateSpan(ctx, sp.id, map[string]any{"total_cost": sp.cost}); err != nil {
+			t.Fatalf("UpdateSpan: %v", err)
+		}
+	}
+
+	if err := traces.BatchUpdateTraceAggregates(ctx, traceID); err != nil {
+		t.Fatalf("BatchUpdateTraceAggregates: %v", err)
+	}
+	got, err := traces.GetTrace(ctx, traceID)
+	if err != nil {
+		t.Fatalf("GetTrace: %v", err)
+	}
+	if got.LLMCallCount != 2 || got.TotalOutputTokens != 150 || math.Abs(got.TotalCost-0.45) > 1e-9 {
+		t.Fatalf("trace = llm %d output %d cost %v, want 2/150/0.45", got.LLMCallCount, got.TotalOutputTokens, got.TotalCost)
+	}
+}

@@ -140,6 +140,9 @@ WITH priced_spans AS (
 	WHERE s.span_type IN ('llm_call', 'tool_call')
 	  AND base.model_id <> ''
 	  AND COALESCE(s.total_cost, 0) = 0
+	  -- The provider reported this run's cost (claude-cli total_cost_usd);
+	  -- a zero remainder on its wrapper span is real, not missing.
+	  AND COALESCE((s.metadata->'provider_run'->>'cost_usd')::numeric, 0) = 0
 	  AND (usage.input_tokens = 0 OR price.input_price IS NOT NULL)
 	  AND (usage.output_tokens = 0 OR price.output_price IS NOT NULL)
 	  AND (usage.cache_read_tokens = 0 OR price.cache_read_price IS NOT NULL)
@@ -221,7 +224,7 @@ WITH agg AS (
 	SELECT
 		trace_id,
 		COUNT(*) AS span_count,
-		COUNT(*) FILTER (WHERE span_type = 'llm_call') AS llm_call_count,
+		COUNT(*) FILTER (WHERE span_type = 'llm_call' AND NOT COALESCE((metadata->'provider_run'->>'nested_llm_calls')::int, 0) > 0) AS llm_call_count,
 		COUNT(*) FILTER (WHERE span_type = 'tool_call') AS tool_call_count,
 		COALESCE(SUM(input_tokens) FILTER (WHERE span_type IN ('llm_call', 'tool_call') AND input_tokens IS NOT NULL), 0) AS total_input_tokens,
 		COALESCE(SUM(output_tokens) FILTER (WHERE span_type IN ('llm_call', 'tool_call') AND output_tokens IS NOT NULL), 0) AS total_output_tokens,
@@ -265,7 +268,7 @@ WITH agg AS (
 	SELECT
 		trace_id,
 		COUNT(*) AS span_count,
-		COUNT(*) FILTER (WHERE span_type = 'llm_call') AS llm_call_count,
+		COUNT(*) FILTER (WHERE span_type = 'llm_call' AND NOT COALESCE((metadata->'provider_run'->>'nested_llm_calls')::int, 0) > 0) AS llm_call_count,
 		COUNT(*) FILTER (WHERE span_type = 'tool_call') AS tool_call_count,
 		COALESCE(SUM(input_tokens) FILTER (WHERE span_type IN ('llm_call', 'tool_call') AND input_tokens IS NOT NULL), 0) AS total_input_tokens,
 		COALESCE(SUM(output_tokens) FILTER (WHERE span_type IN ('llm_call', 'tool_call') AND output_tokens IS NOT NULL), 0) AS total_output_tokens,
