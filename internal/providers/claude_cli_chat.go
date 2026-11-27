@@ -88,7 +88,7 @@ func (p *ClaudeCLIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 			return nil, fmt.Errorf("claude-cli: %w (stderr: %s)", err, stderr.String())
 		}
 
-		return parseJSONResponse(output)
+		return parseJSONResponse(output, NestedTraceObserverFromContext(ctx))
 	}
 }
 

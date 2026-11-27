@@ -8,9 +8,11 @@ import (
 )
 
 // parseJSONResponse parses the CLI JSON output into a ChatResponse.
-func parseJSONResponse(data []byte) (*ChatResponse, error) {
+// obs (may be nil) receives nested turn/tool callbacks replayed from the
+// event array; see parseJSONArray.
+func parseJSONResponse(data []byte, obs NestedTraceObserver) (*ChatResponse, error) {
 	// Try parsing as JSON array first (CLI may output all events as a single array).
-	if resp := parseJSONArray(data); resp != nil {
+	if resp := parseJSONArray(data, obs); resp != nil {
 		return resp, nil
 	}
 
@@ -38,39 +40,36 @@ func parseJSONResponse(data []byte) (*ChatResponse, error) {
 
 // parseJSONArray tries to parse data as a JSON array of CLI events, extracting
 // the "result" event's text content and "assistant" event's text blocks.
-func parseJSONArray(data []byte) *ChatResponse {
+//
+// `--output-format json --verbose` prints every stream event in one array once
+// the run ends. The events are replayed through cliTraceTracker so the trace
+// gets the same turns, tool calls, tokens and cost as the stream-json path.
+// The array has no timestamps, so replayed spans all start and end when the
+// CLI process exits.
+func parseJSONArray(data []byte, obs NestedTraceObserver) *ChatResponse {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || trimmed[0] != '[' {
 		return nil
 	}
 
-	var events []json.RawMessage
-	if err := json.Unmarshal(trimmed, &events); err != nil {
+	var raws []json.RawMessage
+	if err := json.Unmarshal(trimmed, &raws); err != nil {
 		return nil
 	}
 
 	var resultText string
 	var assistantText strings.Builder
 	var usage *Usage
-	var trace *ProviderTrace
+	resultIdx := -1
 	finishReason := "stop"
 
-	for _, raw := range events {
-		var ev struct {
-			Type    string          `json:"type"`
-			Subtype string          `json:"subtype,omitempty"`
-			Result  string          `json:"result,omitempty"`
-			Message json.RawMessage `json:"message,omitempty"`
-			Usage   *cliUsage       `json:"usage,omitempty"`
-
-			CostUSD       float64 `json:"cost_usd,omitempty"`
-			TotalCostUSD  float64 `json:"total_cost_usd,omitempty"`
-			NumTurns      int     `json:"num_turns,omitempty"`
-			DurationAPIMS int     `json:"duration_api_ms,omitempty"`
-		}
+	events := make([]cliStreamEvent, 0, len(raws))
+	for _, raw := range raws {
+		var ev cliStreamEvent
 		if err := json.Unmarshal(raw, &ev); err != nil {
 			continue
 		}
+		events = append(events, ev)
 
 		switch ev.Type {
 		case "result":
@@ -85,22 +84,14 @@ func parseJSONArray(data []byte) *ChatResponse {
 					TotalTokens:      ev.Usage.InputTokens + ev.Usage.OutputTokens,
 				}
 			}
-			trace = &ProviderTrace{
-				TotalUsage:    ev.Usage.toTraceUsage(),
-				CostUSD:       cliCostUSD(ev.TotalCostUSD, ev.CostUSD),
-				NumTurns:      ev.NumTurns,
-				DurationAPIMS: ev.DurationAPIMS,
-			}
+			resultIdx = len(events) - 1
 
 		case "assistant":
 			// Extract text from content blocks
 			if ev.Message != nil {
-				var msg cliStreamMsg
-				if err := json.Unmarshal(ev.Message, &msg); err == nil {
-					for _, block := range msg.Content {
-						if block.Type == "text" {
-							assistantText.WriteString(block.Text)
-						}
+				for _, block := range ev.Message.Content {
+					if block.Type == "text" {
+						assistantText.WriteString(block.Text)
 					}
 				}
 			}
@@ -116,11 +107,28 @@ func parseJSONArray(data []byte) *ChatResponse {
 		return nil
 	}
 
+	// Replay only once the array is known to produce a response, so a
+	// fallback parse never leaves orphan child spans behind.
+	var resultEv *cliStreamEvent
+	if resultIdx >= 0 {
+		resultEv = &events[resultIdx]
+	}
+	tracker := newCLITraceTracker(obs, nil)
+	for i := range events {
+		ev := &events[i]
+		switch ev.Type {
+		case "assistant":
+			tracker.onAssistant(ev.Message, ev.ParentToolUseID)
+		case "user":
+			tracker.onUser(ev.Message, ev.ParentToolUseID)
+		}
+	}
+
 	return &ChatResponse{
 		Content:       content,
 		FinishReason:  finishReason,
 		Usage:         usage,
-		ProviderTrace: trace,
+		ProviderTrace: tracker.finish(resultEv),
 	}
 }
 

@@ -245,7 +245,7 @@ func TestAllocateCLITurnCostsWithoutModelUsage(t *testing.T) {
 }
 
 func TestParseCLIJSONResultCarriesCost(t *testing.T) {
-	resp, err := parseJSONResponse([]byte(`{"type":"result","subtype":"success","result":"ok","total_cost_usd":0.12,"num_turns":3,"usage":{"input_tokens":5,"output_tokens":7,"cache_read_input_tokens":900}}`))
+	resp, err := parseJSONResponse([]byte(`{"type":"result","subtype":"success","result":"ok","total_cost_usd":0.12,"num_turns":3,"usage":{"input_tokens":5,"output_tokens":7,"cache_read_input_tokens":900}}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,5 +266,96 @@ func TestCLIStreamMsgStringContent(t *testing.T) {
 	}
 	if ev.Message == nil || len(ev.Message.Content) != 0 {
 		t.Fatalf("message = %+v", ev.Message)
+	}
+}
+
+// jsonArrayFixture turns the stream fixture into the single array that
+// `--output-format json --verbose` prints (the Chat / non-stream path).
+func jsonArrayFixture(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("testdata/claude_cli_stream_tools.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []json.RawMessage
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+		events = append(events, json.RawMessage(line))
+	}
+	out, err := json.Marshal(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "out.json")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func runFakeChat(t *testing.T, ctx context.Context, fixture string) *ChatResponse {
+	t.Helper()
+	p := NewClaudeCLIProvider(fakeClaudeCLI(t, fixture, 0), WithClaudeCLIWorkDir(t.TempDir()))
+	resp, err := p.Chat(ctx, ChatRequest{
+		Messages: []Message{{Role: "user", Content: "review"}},
+		Options:  map[string]any{OptSessionKey: "trace-test"},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	return resp
+}
+
+// The non-stream path (wake / channel runs with Stream=false) must produce the
+// same nested trace as ChatStream, and the same response with or without it.
+func TestClaudeCLIChatJSONArrayNestedTrace(t *testing.T) {
+	fixture := jsonArrayFixture(t)
+	plain := runFakeChat(t, context.Background(), fixture)
+	chatObs := &recordedObserver{}
+	traced := runFakeChat(t, WithNestedTraceObserver(context.Background(), chatObs), fixture)
+
+	if plain.Content != "Review posted: 1 issue." || traced.Content != plain.Content || traced.FinishReason != plain.FinishReason {
+		t.Fatalf("content: plain=%q traced=%q", plain.Content, traced.Content)
+	}
+	if *plain.Usage != *traced.Usage || plain.Usage.PromptTokens != 24 || plain.Usage.CompletionTokens != 400 || plain.Usage.CacheReadTokens != 0 {
+		t.Fatalf("Usage plain=%+v traced=%+v", plain.Usage, traced.Usage)
+	}
+	if plain.ProviderTrace.Nested != (NestedTraceTotals{}) || plain.ProviderTrace.RemainderCostUSD() != 0.5 {
+		t.Fatalf("plain ProviderTrace = %+v", plain.ProviderTrace)
+	}
+
+	streamObs := &recordedObserver{}
+	streamResp, _ := runFakeStream(t, WithNestedTraceObserver(context.Background(), streamObs), "testdata/claude_cli_stream_tools.jsonl")
+
+	type turn struct {
+		key, parent string
+		usage       Usage
+		tools       int
+	}
+	collect := func(r *recordedObserver) (turns []turn, tools []string) {
+		ends := map[string]NestedLLMTurnEnd{}
+		for _, e := range r.turnEnds {
+			ends[e.Key] = e
+		}
+		for _, s := range r.turnStarts {
+			turns = append(turns, turn{s.Key, s.ParentKey, ends[s.Key].Usage, ends[s.Key].ToolCalls})
+		}
+		for _, s := range r.toolStarts {
+			tools = append(tools, s.Key+"<"+s.ParentKey)
+		}
+		return turns, tools
+	}
+	gotTurns, gotTools := collect(chatObs)
+	wantTurns, wantTools := collect(streamObs)
+	if fmt.Sprint(gotTurns) != fmt.Sprint(wantTurns) || fmt.Sprint(gotTools) != fmt.Sprint(wantTools) {
+		t.Fatalf("json path turns=%v tools=%v\nstream path turns=%v tools=%v", gotTurns, gotTools, wantTurns, wantTools)
+	}
+	if len(chatObs.toolEnds) != 4 || len(chatObs.turnEnds) != 5 {
+		t.Fatalf("json path ends: tools %d turns %d", len(chatObs.toolEnds), len(chatObs.turnEnds))
+	}
+	if fmt.Sprint(chatObs.costs) != fmt.Sprint(streamObs.costs) {
+		t.Fatalf("costs json=%v stream=%v", chatObs.costs, streamObs.costs)
+	}
+	if *traced.ProviderTrace != *streamResp.ProviderTrace {
+		t.Fatalf("ProviderTrace json=%+v stream=%+v", traced.ProviderTrace, streamResp.ProviderTrace)
 	}
 }
