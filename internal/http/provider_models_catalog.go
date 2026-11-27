@@ -119,6 +119,8 @@ func acpModels() []ModelInfo {
 // chatGPTOAuthModels returns models available via ChatGPT OAuth integration.
 func chatGPTOAuthModels() []ModelInfo {
 	return withReasoningCapabilities([]ModelInfo{
+		{ID: "gpt-5.6-sol", Name: "GPT-5.6 Sol"},
+		{ID: "gpt-5.6-terra", Name: "GPT-5.6 Terra"},
 		{ID: providers.DefaultCodexModel, Name: "GPT-5.5"},
 		{ID: "gpt-5.4", Name: "GPT-5.4"},
 		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini"},
@@ -131,4 +133,29 @@ func chatGPTOAuthModels() []ModelInfo {
 		{ID: "gpt-5.1-codex-mini", Name: "GPT-5.1 Codex Mini"},
 		{ID: "gpt-5.1", Name: "GPT-5.1"},
 	})
+}
+
+// clefModels returns the models supported by Cloudflare Workers AI Clef.
+func clefModels() []ModelInfo {
+	return []ModelInfo{
+		{ID: "@cf/cloudflare/clef-flash", Name: "Clef Flash (9B Sub-40ms)", Category: "decision"},
+		{ID: "@cf/cloudflare/clef", Name: "Clef (27B Multimodal)", Category: "decision"},
+	}
+}
+
+// jevModels returns the models supported by TypeSafe AI Jev.
+func jevModels() []ModelInfo {
+	return []ModelInfo{
+		{ID: "jev-latest", Name: "Jev Latest (TypeSafe AI Flagship)", Category: "decision"},
+		{ID: "jev-preview", Name: "Jev Preview", Category: "decision"},
+		{ID: "jev-1.14.0", Name: "Jev 1.14.0", Category: "decision"},
+		{ID: "jev-1.13.0", Name: "Jev 1.13.0", Category: "decision"},
+	}
+}
+
+// openAIDecisionModels returns the models supported by OpenAI Decisions API.
+func openAIDecisionModels() []ModelInfo {
+	return []ModelInfo{
+		{ID: "gpt-6-luna", Name: "GPT-6 Luna (OpenAI Decisions API)", Category: "decision"},
+	}
 }

@@ -34,6 +34,7 @@ type ConsumerDeps struct {
 	SubagentMgr      *tools.SubagentManager
 	UsageCaps        *usagecaps.Service
 	ProviderReg      *providers.Registry
+	SystemConfigs    store.SystemConfigStore
 	TeamWorkEmbedder memory.EmbeddingProvider
 	BgWg             sync.WaitGroup
 	GetAnnounceMu    func(string) *sync.Mutex

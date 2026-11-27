@@ -732,3 +732,66 @@ func TestProvidersHandlerListProviderModelsOllamaCloudSendsAuthHeader(t *testing
 		t.Errorf("models = %#v, want [{ID: cloud-model:latest}]", result.Models)
 	}
 }
+
+func TestProvidersHandlerListDecisionModelsAndCapabilityFilter(t *testing.T) {
+	token := setupProvidersAdminToken(t)
+	providerStore := newMockProviderStore()
+
+	clef := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		Name:         "my-clef",
+		ProviderType: store.ProviderCloudflareClef,
+		APIBase:      "https://api.cloudflare.com/client/v4/accounts/acc123",
+		APIKey:       "token",
+		Enabled:      true,
+	}
+	jev := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		Name:         "my-jev",
+		ProviderType: store.ProviderTypeSafeJev,
+		APIBase:      "https://api.typesafe.ai",
+		APIKey:       "key",
+		Enabled:      true,
+	}
+	_ = providerStore.CreateProvider(t.Context(), clef)
+	_ = providerStore.CreateProvider(t.Context(), jev)
+
+	handler := NewProvidersHandler(providerStore, newMockSecretsStore(), nil, "")
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// General listing returns models with Category: "decision"
+	req := httptest.NewRequest(http.MethodGet, "/v1/providers/"+clef.ID.String()+"/models", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("clef models status = %d, want 200", w.Code)
+	}
+	var res ProviderModelsResponse
+	if err := json.NewDecoder(w.Body).Decode(&res); err != nil {
+		t.Fatalf("decode err = %v", err)
+	}
+	if len(res.Models) == 0 {
+		t.Fatal("expected clef models, got empty")
+	}
+	if res.Models[0].Category != "decision" {
+		t.Errorf("expected Category: decision, got %q", res.Models[0].Category)
+	}
+
+	// Filter by capability=chat returns empty list
+	reqChat := httptest.NewRequest(http.MethodGet, "/v1/providers/"+clef.ID.String()+"/models?capability=chat", nil)
+	reqChat.Header.Set("Authorization", "Bearer "+token)
+	wChat := httptest.NewRecorder()
+	mux.ServeHTTP(wChat, reqChat)
+	if wChat.Code != http.StatusOK {
+		t.Fatalf("chat filter status = %d, want 200", wChat.Code)
+	}
+	var resChat ProviderModelsResponse
+	if err := json.NewDecoder(wChat.Body).Decode(&resChat); err != nil {
+		t.Fatalf("decode err = %v", err)
+	}
+	if len(resChat.Models) != 0 {
+		t.Errorf("expected 0 models for capability=chat on decision provider, got %d", len(resChat.Models))
+	}
+}

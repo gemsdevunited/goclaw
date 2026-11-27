@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/nextlevelbuilder/goclaw/internal/audio"
 	"github.com/nextlevelbuilder/goclaw/internal/bootstrap"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
@@ -24,6 +25,7 @@ func (m *AgentsMethods) handleUpdate(ctx context.Context, client *gateway.Client
 	locale := store.LocaleFromContext(ctx)
 	var params struct {
 		AgentID           string `json:"agentId"`
+		TenantID          string `json:"tenant_id,omitempty"`
 		Name              string `json:"name"`
 		Workspace         string `json:"workspace"`
 		Provider          string `json:"provider"`
@@ -72,10 +74,21 @@ func (m *AgentsMethods) handleUpdate(ctx context.Context, client *gateway.Client
 
 	if m.agentStore != nil {
 		// --- DB-backed: update agent in store ---
-		ag, err := m.agentStore.GetByKey(ctx, params.AgentID)
+		lookupCtx := ctx
+		if client.IsOwner() && params.TenantID != "" {
+			if tid, err := uuid.Parse(params.TenantID); err == nil {
+				lookupCtx = store.WithTenantID(ctx, tid)
+			}
+		}
+		ag, err := m.agentStore.GetByKey(lookupCtx, params.AgentID)
 		if err != nil {
 			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrNotFound, i18n.T(locale, i18n.MsgAgentNotFound, params.AgentID)))
 			return
+		}
+
+		targetCtx := lookupCtx
+		if ag != nil && ag.TenantID != uuid.Nil {
+			targetCtx = store.WithTenantID(ctx, ag.TenantID)
 		}
 
 		updates := map[string]any{}
@@ -88,6 +101,10 @@ func (m *AgentsMethods) handleUpdate(ctx context.Context, client *gateway.Client
 			os.MkdirAll(ws, 0755)
 		}
 		if params.Provider != "" {
+			if err := m.validateNotDecisionProvider(targetCtx, params.Provider); err != nil {
+				client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, err.Error()))
+				return
+			}
 			updates["provider"] = params.Provider
 		}
 		if params.Model != "" {
@@ -195,7 +212,7 @@ func (m *AgentsMethods) handleUpdate(ctx context.Context, client *gateway.Client
 		}
 
 		if len(updates) > 0 {
-			if err := m.agentStore.Update(ctx, ag.ID, updates); err != nil {
+			if err := m.agentStore.Update(targetCtx, ag.ID, updates); err != nil {
 				client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, i18n.T(locale, i18n.MsgFailedToUpdate, "agent", fmt.Sprintf("%v", err))))
 				return
 			}
@@ -205,7 +222,7 @@ func (m *AgentsMethods) handleUpdate(ctx context.Context, client *gateway.Client
 		if params.Avatar != "" || params.Name != "" {
 			// Read existing agent-level IDENTITY.md content.
 			existingContent := ""
-			if dbFiles, err := m.agentStore.GetAgentContextFiles(ctx, ag.ID); err == nil {
+			if dbFiles, err := m.agentStore.GetAgentContextFiles(targetCtx, ag.ID); err == nil {
 				for _, f := range dbFiles {
 					if f.FileName == "IDENTITY.md" {
 						existingContent = f.Content
@@ -227,20 +244,20 @@ func (m *AgentsMethods) handleUpdate(ctx context.Context, client *gateway.Client
 				newContent = buildIdentityContent(params.Name, "", params.Avatar)
 			}
 
-			if err := m.agentStore.SetAgentContextFile(ctx, ag.ID, "IDENTITY.md", newContent); err != nil {
+			if err := m.agentStore.SetAgentContextFile(targetCtx, ag.ID, "IDENTITY.md", newContent); err != nil {
 				slog.Warn("failed to update agent IDENTITY.md", "agent", params.AgentID, "error", err)
 			}
 
 			// For open agents: also update Name in all per-user IDENTITY.md copies.
 			// Per-user files take precedence in LoadContextFiles, so they must be updated too.
 			if params.Name != "" && ag.AgentType == store.AgentTypeOpen {
-				if userFiles, err := m.agentStore.ListUserContextFilesByName(ctx, ag.ID, "IDENTITY.md"); err == nil {
+				if userFiles, err := m.agentStore.ListUserContextFilesByName(targetCtx, ag.ID, "IDENTITY.md"); err == nil {
 					for _, uf := range userFiles {
 						updated := bootstrap.UpdateIdentityField(uf.Content, "Name", params.Name)
 						if updated == uf.Content {
 							continue // no change needed
 						}
-						if err := m.agentStore.SetUserContextFile(ctx, ag.ID, uf.UserID, "IDENTITY.md", updated); err != nil {
+						if err := m.agentStore.SetUserContextFile(targetCtx, ag.ID, uf.UserID, "IDENTITY.md", updated); err != nil {
 							slog.Warn("failed to update user IDENTITY.md on rename", "agent", params.AgentID, "user", uf.UserID, "error", err)
 						}
 					}

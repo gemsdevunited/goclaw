@@ -3,23 +3,33 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/nextlevelbuilder/goclaw/internal/bgalert"
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
+	"github.com/nextlevelbuilder/goclaw/internal/providerresolve"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
 // SystemConfigsHandler handles system config CRUD endpoints.
 type SystemConfigsHandler struct {
-	store  store.SystemConfigStore
-	msgBus *bus.MessageBus
+	store         store.SystemConfigStore
+	providerStore store.ProviderStore
+	msgBus        *bus.MessageBus
 }
 
 func NewSystemConfigsHandler(s store.SystemConfigStore, msgBus *bus.MessageBus) *SystemConfigsHandler {
 	return &SystemConfigsHandler{store: s, msgBus: msgBus}
+}
+
+// WithProviderStore attaches a ProviderStore for validating provider-backed configs.
+func (h *SystemConfigsHandler) WithProviderStore(ps store.ProviderStore) *SystemConfigsHandler {
+	h.providerStore = ps
+	return h
 }
 
 // validKeyRe allows alphanumeric, dots, underscores, hyphens (1-100 chars).
@@ -79,6 +89,25 @@ func (h *SystemConfigsHandler) handleSet(w http.ResponseWriter, r *http.Request)
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidJSON)})
 		return
+	}
+
+	val := strings.TrimSpace(req.Value)
+	if key == providerresolve.DecisionProviderConfigKey && val != "" {
+		if h.providerStore != nil {
+			prov, err := h.providerStore.GetProviderByName(r.Context(), val)
+			if err != nil || prov == nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("decision provider %q not found", val)})
+				return
+			}
+			if !prov.Enabled {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("decision provider %q is disabled", val)})
+				return
+			}
+			if !store.IsDecisionProviderType(prov.ProviderType) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("provider %q is not a decision provider", val)})
+				return
+			}
+		}
 	}
 
 	if err := h.store.Set(r.Context(), key, req.Value); err != nil {

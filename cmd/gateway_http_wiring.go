@@ -115,7 +115,11 @@ func (d *gatewayDeps) wireHTTPHandlersOnServer(
 
 	// System configs API
 	if d.pgStores.SystemConfigs != nil {
-		d.server.SetSystemConfigsHandler(httpapi.NewSystemConfigsHandler(d.pgStores.SystemConfigs, d.msgBus))
+		sysConfigHandler := httpapi.NewSystemConfigsHandler(d.pgStores.SystemConfigs, d.msgBus)
+		if d.pgStores.Providers != nil {
+			sysConfigHandler.WithProviderStore(d.pgStores.Providers)
+		}
+		d.server.SetSystemConfigsHandler(sysConfigHandler)
 
 		// Refresh in-memory config when system_configs change via HTTP API
 		d.msgBus.Subscribe(bus.TopicSystemConfigChanged, func(evt bus.Event) {

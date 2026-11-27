@@ -1,9 +1,14 @@
 package vault
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/nextlevelbuilder/goclaw/internal/providers"
+	usagecaps "github.com/nextlevelbuilder/goclaw/internal/usage/caps"
 )
 
 // ============================================================================
@@ -191,3 +196,160 @@ func TestParseClassifyResponse_ZeroIdx(t *testing.T) {
 	}
 }
 
+type mockDecisionProvider struct {
+	answers map[string]any
+	err     error
+}
+
+func (m *mockDecisionProvider) Evaluate(_ context.Context, _ providers.DecisionRequest) (*providers.DecisionResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &providers.DecisionResponse{Answers: m.answers}, nil
+}
+func (m *mockDecisionProvider) Name() string         { return "mock-decision" }
+func (m *mockDecisionProvider) CanonicalName() string { return "mock-decision" }
+func (m *mockDecisionProvider) DefaultModel() string { return "mock-model" }
+
+func TestClassifyCandidatesWithDecision(t *testing.T) {
+	source := classifyDoc{
+		DocID:   "doc-source",
+		Title:   "API Auth Spec",
+		Summary: "Explains bearer tokens",
+	}
+	candidates := []classifyDoc{
+		{DocID: "cand-1", Title: "OAuth Gateway", Summary: "Issues tokens"},
+		{DocID: "cand-2", Title: "Payment Service", Summary: "Handles billing"},
+	}
+
+	// Documented API format uses "Choice"
+	dp := &mockDecisionProvider{
+		answers: map[string]any{
+			"cand_1": providers.ChoiceAnswer{Choice: "depends_on", Confidence: 0.95},
+			"cand_2": providers.ChoiceAnswer{Choice: "SKIP", Confidence: 0.88},
+		},
+	}
+
+	results, ok := classifyCandidatesWithDecision(context.Background(), dp, source, candidates)
+	if !ok {
+		t.Fatal("expected classifyCandidatesWithDecision to succeed")
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Idx != 1 || results[0].Type != "depends_on" {
+		t.Errorf("unexpected result 0: %+v", results[0])
+	}
+	if results[0].Ctx != "requires OAuth Gateway to function" {
+		t.Errorf("unexpected result 0 Ctx: %q, want 'requires OAuth Gateway to function'", results[0].Ctx)
+	}
+	if results[1].Idx != 2 || results[1].Type != "SKIP" {
+		t.Errorf("unexpected result 1: %+v", results[1])
+	}
+
+	// Missing / empty answers path -> must return ok=false so caller triggers LLM fallback
+	emptyDp := &mockDecisionProvider{
+		answers: map[string]any{},
+	}
+	_, ok = classifyCandidatesWithDecision(context.Background(), emptyDp, source, candidates)
+	if ok {
+		t.Fatal("expected empty answers to return ok=false for LLM fallback")
+	}
+
+	// Incomplete answers path (only 1 out of 2 candidates answered) -> must return ok=false
+	partialDp := &mockDecisionProvider{
+		answers: map[string]any{
+			"cand_1": providers.ChoiceAnswer{Choice: "depends_on", Confidence: 0.95},
+			// cand_2 missing
+		},
+	}
+	_, ok = classifyCandidatesWithDecision(context.Background(), partialDp, source, candidates)
+	if ok {
+		t.Fatal("expected incomplete candidate answers to return ok=false for LLM fallback")
+	}
+
+	// Unknown / invalid values path -> must return ok=false
+	unknownDp := &mockDecisionProvider{
+		answers: map[string]any{
+			"cand_1": providers.ChoiceAnswer{Choice: "unknown", Confidence: 0.0},
+			"cand_2": providers.ChoiceAnswer{Choice: "", Confidence: 0.0},
+		},
+	}
+	_, ok = classifyCandidatesWithDecision(context.Background(), unknownDp, source, candidates)
+	if ok {
+		t.Fatal("expected unknown/empty choices to return ok=false for LLM fallback")
+	}
+
+	// Bogus / invalid relationship label path -> must return ok=false (must NOT accept bogus types like "bogus_type")
+	bogusDp := &mockDecisionProvider{
+		answers: map[string]any{
+			"cand_1": providers.ChoiceAnswer{Choice: "depends_on", Confidence: 0.95},
+			"cand_2": providers.ChoiceAnswer{Choice: "bogus_type", Confidence: 0.88},
+		},
+	}
+	_, ok = classifyCandidatesWithDecision(context.Background(), bogusDp, source, candidates)
+	if ok {
+		t.Fatal("expected bogus relationship label to return ok=false for LLM fallback")
+	}
+
+	// Low confidence path (< 0.60) -> must return ok=false to trigger LLM fallback
+	lowConfDp := &mockDecisionProvider{
+		answers: map[string]any{
+			"cand_1": providers.ChoiceAnswer{Choice: "depends_on", Confidence: 0.40},
+			"cand_2": providers.ChoiceAnswer{Choice: "SKIP", Confidence: 0.88},
+		},
+	}
+	_, ok = classifyCandidatesWithDecision(context.Background(), lowConfDp, source, candidates)
+	if ok {
+		t.Fatal("expected low confidence (< 0.60) to return ok=false for LLM fallback")
+	}
+
+	// Error path
+	errDp := &mockDecisionProvider{err: fmt.Errorf("network error")}
+	_, ok = classifyCandidatesWithDecision(context.Background(), errDp, source, candidates)
+	if ok {
+		t.Fatal("expected error to return ok=false")
+	}
+}
+
+func TestClassifyCandidatesWithDecision_CapAndCancellationErrors(t *testing.T) {
+	source := classifyDoc{
+		DocID:   "doc-source",
+		Title:   "Source Document",
+		Path:    "docs/source.md",
+		Summary: "Architecture design doc.",
+	}
+	candidates := []classifyDoc{
+		{DocID: "doc-1", Title: "DB Design", Path: "docs/db.md", Summary: "Database schema."},
+	}
+
+	// ErrCapExceeded must be returned as ErrCapExceeded directly, not masked as ErrDecisionFallback
+	capErrDp := &mockDecisionProvider{err: usagecaps.ErrCapExceeded}
+	_, err := classifyCandidatesWithDecisionAndCaps(context.Background(), capErrDp, nil, source, candidates)
+	if !errors.Is(err, usagecaps.ErrCapExceeded) {
+		t.Fatalf("expected ErrCapExceeded, got %v", err)
+	}
+
+	// context.Canceled must be returned as context.Canceled directly
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = classifyCandidatesWithDecisionAndCaps(canceledCtx, &mockDecisionProvider{}, nil, source, candidates)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	// Sub-timeout (context.DeadlineExceeded) when parent context is active must wrap ErrDecisionFallback to trigger chat fallback
+	timeoutDp := &mockDecisionProvider{err: context.DeadlineExceeded}
+	_, err = classifyCandidatesWithDecisionAndCaps(context.Background(), timeoutDp, nil, source, candidates)
+	if !errors.Is(err, ErrDecisionFallback) {
+		t.Fatalf("expected ErrDecisionFallback for sub-timeout when parent context is active, got %v", err)
+	}
+
+	// Network / provider error must wrap ErrDecisionFallback
+	netErrDp := &mockDecisionProvider{err: fmt.Errorf("upstream timeout")}
+	_, err = classifyCandidatesWithDecisionAndCaps(context.Background(), netErrDp, nil, source, candidates)
+	if !errors.Is(err, ErrDecisionFallback) {
+		t.Fatalf("expected ErrDecisionFallback for network error, got %v", err)
+	}
+}
