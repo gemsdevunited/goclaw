@@ -189,7 +189,10 @@ func (s *SQLiteTracingStore) BatchUpdateTraceAggregates(ctx context.Context, tra
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE traces SET
 			span_count       = (SELECT COUNT(*) FROM spans WHERE trace_id = ?),
-			llm_call_count   = (SELECT COUNT(*) FROM spans WHERE trace_id = ? AND span_type = 'llm_call'),
+			-- Provider-run wrapper spans (claude-cli) are not API calls; their
+			-- child llm_call spans are. Their tokens and cost still count below.
+			llm_call_count   = (SELECT COUNT(*) FROM spans WHERE trace_id = ? AND span_type = 'llm_call'
+				AND COALESCE(json_extract(metadata, '$.provider_run.nested_llm_calls'), 0) = 0),
 			tool_call_count  = (SELECT COUNT(*) FROM spans WHERE trace_id = ? AND span_type = 'tool_call'),
 			total_input_tokens  = COALESCE((SELECT SUM(input_tokens)  FROM spans WHERE trace_id = ? AND span_type IN ('llm_call', 'tool_call') AND input_tokens  IS NOT NULL), 0),
 			total_output_tokens = COALESCE((SELECT SUM(output_tokens) FROM spans WHERE trace_id = ? AND span_type IN ('llm_call', 'tool_call') AND output_tokens IS NOT NULL), 0),

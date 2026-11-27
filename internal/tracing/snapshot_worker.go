@@ -340,7 +340,8 @@ func querySpanAggregates(ctx context.Context, db *sql.DB, from, to time.Time) ([
 			COALESCE(t.channel, '') as channel,
 			COALESCE(s.provider, '') as provider,
 			COALESCE(s.model, '') as model,
-			COUNT(*) as llm_call_count,
+			-- Provider-run wrapper spans (claude-cli) are not API calls.
+			COUNT(*) FILTER (WHERE CAST(COALESCE(NULLIF(s.metadata->'provider_run'->>'nested_llm_calls', ''), '0') AS INTEGER) = 0) as llm_call_count,
 			COALESCE(SUM(s.input_tokens), 0) as span_input_tokens,
 			COALESCE(SUM(s.output_tokens), 0) as span_output_tokens,
 			COALESCE(SUM(s.total_cost), 0) as span_cost,

@@ -203,3 +203,42 @@ func insertUsageLiveTrace(t *testing.T, db *sql.DB, tenantID uuid.UUID, start ti
 		t.Fatalf("insert tool span: %v", err)
 	}
 }
+
+// A claude-cli wrapper span (provider_run.nested_llm_calls > 0) adds its
+// remainder cost but is not counted as an LLM call.
+func TestUsageSummaryLiveSkipsProviderRunWrapperCount(t *testing.T) {
+	db, tenantID := usageLiveTestDB(t)
+	now := time.Now().UTC()
+	insertUsageLiveTrace(t, db, tenantID, now)
+	var traceID string
+	if err := db.QueryRow(`SELECT id FROM traces LIMIT 1`).Scan(&traceID); err != nil {
+		t.Fatalf("trace id: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO spans (
+			id, trace_id, tenant_id, span_type, provider, model, input_tokens, output_tokens, total_cost, metadata, start_time
+		) VALUES (?, ?, ?, 'llm_call', 'claudecode', 'opus', 0, 30, 0.05, ?, ?)`,
+		uuid.Must(uuid.NewV7()), traceID, tenantID,
+		`{"provider_run":{"nested_llm_calls":1,"cost_usd":0.3}}`, now,
+	); err != nil {
+		t.Fatalf("insert wrapper span: %v", err)
+	}
+
+	h := NewUsageHandler(emptyUsageSnapshotStore{}, nil, db)
+	req := httptest.NewRequest(http.MethodGet, "/v1/usage/summary?period=24h", nil)
+	req = req.WithContext(store.WithTenantID(req.Context(), tenantID))
+	rec := httptest.NewRecorder()
+	h.handleSummary(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Current usageSummary `json:"current"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Current.LLMCalls != 1 || body.Current.OutputTokens != 280 || body.Current.Cost < 0.2999 || body.Current.Cost > 0.3001 {
+		t.Fatalf("current = llm %d output %d cost %v, want 1/280/0.30", body.Current.LLMCalls, body.Current.OutputTokens, body.Current.Cost)
+	}
+}
