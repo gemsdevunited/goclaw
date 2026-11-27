@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings2, Loader2, Save, AlertTriangle, Info, ExternalLink, Network, Cog, Brain, UsersRound } from "lucide-react";
+import { Settings2, Loader2, Save, AlertTriangle, Info, ExternalLink, Network, Cog, Brain, UsersRound, Zap } from "lucide-react";
 import { Link } from "react-router";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { FeatureSwitchGroup } from "@/components/shared/feature-switch-group";
 import type { FeatureSwitchItem } from "@/components/shared/feature-switch-group";
@@ -14,6 +15,7 @@ import { useProviderVerify } from "@/pages/providers/hooks/use-provider-verify";
 import { useProviders } from "@/pages/providers/hooks/use-providers";
 import { useHttp } from "@/hooks/use-ws";
 import { toast } from "@/stores/use-toast-store";
+import { isDecisionProviderType } from "@/constants/providers";
 import { EMBEDDING_MODELS, DEFAULT_EMBEDDING_MODELS, DEFAULTS, parseBool, type InitState } from "./system-settings-constants";
 import { SystemSettingsEmbeddingCard } from "./system-settings-embedding-card";
 import { SystemSettingsCompactionCard } from "./system-settings-compaction-card";
@@ -39,6 +41,9 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
   const [embMaxChunkLen, setEmbMaxChunkLen] = useState("");
   const [embChunkOverlap, setEmbChunkOverlap] = useState("");
   const { verifyEmbedding, embVerifying, embResult, resetEmb } = useProviderVerify();
+
+  // Decision
+  const [decisionProvider, setDecisionProvider] = useState("");
 
   // UX Behavior
   const [intentClassify, setIntentClassify] = useState(true);
@@ -66,6 +71,11 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
   const [skillSlashPartial, setSkillSlashPartial] = useState(false);
   const [skillSlashPrefix, setSkillSlashPrefix] = useState("/");
 
+  const decisionProviders = useMemo(
+    () => providers.filter((p) => p.enabled && isDecisionProviderType(p.provider_type)),
+    [providers],
+  );
+
   const applyConfigs = useCallback((
     configs: Record<string, string>,
     kgSettings?: { extraction_provider?: string; extraction_model?: string; min_confidence?: number },
@@ -73,6 +83,7 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
     const s: InitState = {
       embProvider: configs["embedding.provider"] ?? "", embModel: configs["embedding.model"] ?? "",
       embMaxChunkLen: configs["embedding.max_chunk_len"] ?? "", embChunkOverlap: configs["embedding.chunk_overlap"] ?? "",
+      decisionProvider: configs["decision.provider"] ?? "",
       intentClassify: parseBool(configs["gateway.intent_classify"], true),
       teamWorkClassify: parseBool(configs["gateway.team_work_classify"], false),
       compProvider: configs["compaction.provider"] ?? "", compModel: configs["compaction.model"] ?? "",
@@ -90,6 +101,7 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
     };
     setInit(s);
     setEmbProvider(s.embProvider); setEmbModel(s.embModel); setEmbMaxChunkLen(s.embMaxChunkLen); setEmbChunkOverlap(s.embChunkOverlap);
+    setDecisionProvider(s.decisionProvider);
     setIntentClassify(s.intentClassify);
     setTeamWorkClassify(s.teamWorkClassify);
     setCompProvider(s.compProvider); setCompModel(s.compModel); setCompThreshold(s.compThreshold); setCompKeepRecent(s.compKeepRecent); setCompMaxTokens(s.compMaxTokens);
@@ -134,6 +146,7 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
       if (embModel !== init.embModel) updates["embedding.model"] = embModel;
       if (embMaxChunkLen !== init.embMaxChunkLen) updates["embedding.max_chunk_len"] = embMaxChunkLen;
       if (embChunkOverlap !== init.embChunkOverlap) updates["embedding.chunk_overlap"] = embChunkOverlap;
+      if (decisionProvider !== init.decisionProvider) updates["decision.provider"] = decisionProvider;
       if (intentClassify !== init.intentClassify) updates["gateway.intent_classify"] = String(intentClassify);
       if (teamWorkClassify !== init.teamWorkClassify) updates["gateway.team_work_classify"] = String(teamWorkClassify);
       if (compProvider !== init.compProvider) updates["compaction.provider"] = compProvider;
@@ -189,6 +202,45 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
               verifying={embVerifying} verifyResult={embResult}
               canVerify={!!selectedEmbProviderData && !!embModel.trim()}
             />
+
+            {/* Decision Provider */}
+            <Card className="border-amber-200 dark:border-amber-800">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Zap className="h-4 w-4 text-amber-500" />
+                  {t("decision.title")}
+                </CardTitle>
+                <CardDescription>{t("decision.description")}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-0">
+                <div className="space-y-1.5">
+                  <Label htmlFor="decisionProvider" className="text-xs">{t("decision.provider")}</Label>
+                  <Select value={decisionProvider || "none"} onValueChange={(v) => setDecisionProvider(v === "none" ? "" : v)}>
+                    <SelectTrigger id="decisionProvider" className="w-full text-base md:text-sm">
+                      <SelectValue placeholder={t("decision.providerPlaceholder")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{t("decision.none")}</SelectItem>
+                      {decisionProviders.map((p) => (
+                        <SelectItem key={p.id} value={p.name}>
+                          {p.display_name ? `${p.display_name} (${p.name})` : p.name}
+                        </SelectItem>
+                      ))}
+                      {decisionProvider && !decisionProviders.some((p) => p.name === decisionProvider) && (
+                        <SelectItem value={decisionProvider}>
+                          {decisionProvider} ({t("decision.unavailable")})
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{t("decision.hint")}</p>
+                </div>
+                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                  <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{t("decision.info")}</span>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Knowledge Graph */}
             <Card className="border-violet-200 dark:border-violet-800">

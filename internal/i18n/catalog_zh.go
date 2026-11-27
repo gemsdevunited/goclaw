@@ -369,5 +369,10 @@ func init() {
 		MsgPackagesUpdatesReasonLocked:             "软件包数据库已锁定",
 		MsgPackagesUpdatesReasonDiskFull:           "磁盘已满",
 		MsgPackagesUpdatesReasonHelperUnavailable:  "特权助手不可用",
+		MsgDecisionProviderNotChat:                 "决策提供商 %q 不能用作智能体的聊天提供商",
+		MsgDecisionProviderNotFound:                "未找到决策提供商 %q",
+		MsgDecisionProviderDisabled:                "决策提供商 %q 已禁用",
+		MsgNotDecisionProvider:                     "提供商 %q 不是决策提供商",
+		MsgClefAccountIDRequired:                   "Clef 提供商需要 Cloudflare 账户 ID",
 	})
 }

@@ -406,5 +406,10 @@
     "failedCreate": "创建Provider失败",
     "failedUpdate": "更新Provider失败",
     "failedDelete": "删除Provider失败"
+  },
+  "clef": {
+    "accountId": "Cloudflare 账户 ID",
+    "accountIdPlaceholder": "例如 1a2b3c4d5e6f7g8h9i0j...",
+    "accountIdRequired": "必须填写 Cloudflare 账户 ID"
   }
 }

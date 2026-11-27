@@ -104,7 +104,7 @@ func (s *stubProvider) ChatStream(_ context.Context, _ providers.ChatRequest, _ 
 }
 
 func (s *stubProvider) DefaultModel() string { return "stub-model" }
-func (s *stubProvider) Name() string          { return "stub" }
+func (s *stubProvider) Name() string         { return "stub" }
 
 func TestClassifyIntent_FastPath_Cancel(t *testing.T) {
 	p := &stubProvider{response: "new_task"} // LLM would say new_task, but fast-path wins
@@ -159,6 +159,149 @@ func TestClassifyIntent_LLM_Error_FallsBackToNewTask(t *testing.T) {
 	intent := ClassifyIntent(context.Background(), p, "gpt-4o", "some long message that exceeds 15 runes")
 	if intent != IntentNewTask {
 		t.Errorf("on error should return new_task, got %q", intent)
+	}
+}
+
+type stubDecisionProvider struct {
+	intent     string
+	confidence float64
+	err        error
+}
+
+func (s *stubDecisionProvider) Evaluate(_ context.Context, _ providers.DecisionRequest) (*providers.DecisionResponse, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	conf := 0.95
+	if s.confidence > 0 {
+		conf = s.confidence
+	}
+	return &providers.DecisionResponse{
+		Answers: map[string]any{
+			"intent": providers.ChoiceAnswer{
+				Choice:     s.intent,
+				Selected:   s.intent,
+				Confidence: conf,
+			},
+		},
+	}, nil
+}
+func (s *stubDecisionProvider) Name() string          { return "stub-decision" }
+func (s *stubDecisionProvider) CanonicalName() string { return "stub-decision" }
+func (s *stubDecisionProvider) DefaultModel() string  { return "stub-model" }
+
+func TestClassifyIntent_WithDecisionProvider(t *testing.T) {
+	// LLM would say new_task, but DecisionProvider says status_query
+	llm := &stubProvider{response: "new_task"}
+	decision := &stubDecisionProvider{intent: "status_query"}
+
+	intent := ClassifyIntentWithUsageCapsAndDecision(context.Background(), decision, nil, llm, "gpt-4o", "how is the background process going right now?")
+	if intent != IntentStatusQuery {
+		t.Errorf("expected DecisionProvider to win with status_query, got %q", intent)
+	}
+
+	// Decision provider returns low confidence (e.g. 0.40) -> should fall through to LLM
+	lowConfDecision := &stubDecisionProvider{intent: "cancel", confidence: 0.40}
+	intent = ClassifyIntentWithUsageCapsAndDecision(context.Background(), lowConfDecision, nil, llm, "gpt-4o", "how is the background process going right now?")
+	if intent != IntentNewTask {
+		t.Errorf("expected low confidence to fall through to LLM (new_task), got %q", intent)
+	}
+
+	// Decision provider returns "unknown" -> should fall through to LLM
+	unknownDecision := &stubDecisionProvider{intent: "unknown", confidence: 0.80}
+	intent = ClassifyIntentWithUsageCapsAndDecision(context.Background(), unknownDecision, nil, llm, "gpt-4o", "how is the background process going right now?")
+	if intent != IntentNewTask {
+		t.Errorf("expected unknown choice to fall through to LLM (new_task), got %q", intent)
+	}
+
+	// Decision provider returns error -> should fall through to LLM
+	errDecision := &stubDecisionProvider{err: errors.New("decision provider down")}
+	intent = ClassifyIntentWithUsageCapsAndDecision(context.Background(), errDecision, nil, llm, "gpt-4o", "how is the background process going right now?")
+	if intent != IntentNewTask {
+		t.Errorf("expected LLM fallback to return new_task, got %q", intent)
+	}
+}
+
+func TestClassifyIntent_ContextCanceled_NoFallback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // canceled upfront
+
+	llmCalled := false
+	llm := &stubProviderFunc{fn: func(ctx context.Context, req providers.ChatRequest) (*providers.ChatResponse, error) {
+		llmCalled = true
+		return &providers.ChatResponse{Content: "status_query"}, nil
+	}}
+	slowDecision := &stubDecisionProvider{err: context.Canceled}
+
+	intent := ClassifyIntentWithUsageCapsAndDecision(ctx, slowDecision, nil, llm, "gpt-4o", "how is the background process going right now?")
+	if intent != IntentNewTask {
+		t.Errorf("expected IntentNewTask on canceled context, got %v", intent)
+	}
+	if llmCalled {
+		t.Errorf("expected LLM chat fallback NOT to be called when context is canceled")
+	}
+}
+
+func TestClassifyIntent_DecisionSubTimeout_FallsBackToChat(t *testing.T) {
+	ctx := context.Background()
+
+	llmCalled := false
+	llm := &stubProviderFunc{fn: func(ctx context.Context, req providers.ChatRequest) (*providers.ChatResponse, error) {
+		llmCalled = true
+		return &providers.ChatResponse{Content: "status_query"}, nil
+	}}
+	timeoutDecision := &stubDecisionProvider{err: context.DeadlineExceeded}
+
+	intent := ClassifyIntentWithUsageCapsAndDecision(ctx, timeoutDecision, nil, llm, "gpt-4o", "how is the background process going right now?")
+	if !llmCalled {
+		t.Errorf("expected LLM chat fallback to be called on decision sub-timeout")
+	}
+	if intent != IntentStatusQuery {
+		t.Errorf("expected IntentStatusQuery from chat fallback, got %v", intent)
+	}
+}
+
+type stubProviderFunc struct {
+	fn func(ctx context.Context, req providers.ChatRequest) (*providers.ChatResponse, error)
+}
+
+func (s *stubProviderFunc) Chat(ctx context.Context, req providers.ChatRequest) (*providers.ChatResponse, error) {
+	if s.fn != nil {
+		return s.fn(ctx, req)
+	}
+	return &providers.ChatResponse{Content: "new_task"}, nil
+}
+func (s *stubProviderFunc) ChatStream(ctx context.Context, req providers.ChatRequest, _ func(providers.StreamChunk)) (*providers.ChatResponse, error) {
+	return s.Chat(ctx, req)
+}
+func (s *stubProviderFunc) DefaultModel() string { return "gpt-4o" }
+func (s *stubProviderFunc) Name() string         { return "stub-func" }
+
+func BenchmarkIntentClassify_FastPathKeyword(b *testing.B) {
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ClassifyIntent(ctx, nil, "gpt-4o", "stop")
+	}
+}
+
+func BenchmarkIntentClassify_DecisionProvider(b *testing.B) {
+	ctx := context.Background()
+	decision := &stubDecisionProvider{intent: "status_query"}
+	msg := "what are you currently doing right now?"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ClassifyIntentWithUsageCapsAndDecision(ctx, decision, nil, nil, "gpt-4o", msg)
+	}
+}
+
+func BenchmarkIntentClassify_GenerativeLLM(b *testing.B) {
+	ctx := context.Background()
+	llm := &stubProvider{response: "status_query"}
+	msg := "what are you currently doing right now?"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ClassifyIntent(ctx, llm, "gpt-4o", msg)
 	}
 }
 
@@ -265,15 +408,15 @@ func TestIsExactCancelKeyword_WithWhitespace(t *testing.T) {
 
 func TestIsExactCancelKeyword_NonMatches(t *testing.T) {
 	cases := []string{
-		"stop now",           // not exact
-		"please stop",        // not exact
-		"nonstop",            // embedded
-		"stop it",            // not exact
-		"cancel the order",   // not exact
-		"don't stop",         // not exact
-		"",                   // empty
-		"hello",              // unrelated
-		"làm đơn giản thôi",  // contains "thôi" but not exact
+		"stop now",          // not exact
+		"please stop",       // not exact
+		"nonstop",           // embedded
+		"stop it",           // not exact
+		"cancel the order",  // not exact
+		"don't stop",        // not exact
+		"",                  // empty
+		"hello",             // unrelated
+		"làm đơn giản thôi", // contains "thôi" but not exact
 	}
 	for _, msg := range cases {
 		t.Run(msg, func(t *testing.T) {
@@ -281,5 +424,16 @@ func TestIsExactCancelKeyword_NonMatches(t *testing.T) {
 				t.Errorf("%q should NOT be recognized as cancel keyword", msg)
 			}
 		})
+	}
+}
+
+func TestClassifyIntentWithDecisionResolverSkippedOnKeywordHit(t *testing.T) {
+	called := false
+	resolve := func(context.Context) providers.DecisionProvider { called = true; return nil }
+	if got := ClassifyIntentWithDecisionResolver(context.Background(), resolve, nil, nil, "", "stop"); got != IntentCancel {
+		t.Fatalf("expected cancel via keyword, got %q", got)
+	}
+	if called {
+		t.Fatal("resolver must not run when the keyword fast-path matches")
 	}
 }

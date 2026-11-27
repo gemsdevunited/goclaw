@@ -10,6 +10,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/agent"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway"
+	"github.com/nextlevelbuilder/goclaw/internal/permissions"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
@@ -110,6 +111,7 @@ func (s *createCaptureStore) EnsureUserProfile(_ context.Context, _ uuid.UUID, _
 func (s *createCaptureStore) PropagateContextFile(_ context.Context, _ uuid.UUID, _ string) (int, error) {
 	return 0, nil
 }
+
 // ---- helpers ----
 
 // minimalConfig returns a config sufficient for handleCreate (provider + model defaults only).
@@ -236,5 +238,103 @@ func TestHandleCreate_MultipleOwnerIDs_UsesFirst(t *testing.T) {
 	}
 	if stub.created.OwnerID != "first-owner" {
 		t.Errorf("OwnerID = %q, want %q", stub.created.OwnerID, "first-owner")
+	}
+}
+
+type tenantAwareCaptureStore struct {
+	createCaptureStore
+	agents  map[string]*store.AgentData
+	lastCtx context.Context
+}
+
+func (s *tenantAwareCaptureStore) GetByKey(ctx context.Context, key string) (*store.AgentData, error) {
+	tid := store.TenantIDFromContext(ctx)
+	if s.agents == nil {
+		return nil, nil
+	}
+	return s.agents[tid.String()+"/"+key], nil
+}
+
+func (s *tenantAwareCaptureStore) Create(ctx context.Context, d *store.AgentData) error {
+	s.lastCtx = ctx
+	d.ID = uuid.New()
+	s.created = d
+	if s.agents == nil {
+		s.agents = make(map[string]*store.AgentData)
+	}
+	s.agents[d.TenantID.String()+"/"+d.AgentKey] = d
+	return nil
+}
+
+func TestHandleCreate_TargetTenantScope_CrossTenantSameKey(t *testing.T) {
+	tenantA := uuid.New()
+	tenantB := uuid.New()
+	storeStub := &tenantAwareCaptureStore{
+		agents: map[string]*store.AgentData{
+			tenantA.String() + "/my-agent": {
+				AgentKey: "my-agent",
+				TenantID: tenantA,
+			},
+		},
+	}
+	m := newManagedMethods(t, storeStub)
+
+	// Owner connected with tenantA creates agent in tenantB with same key "my-agent"
+	ownerClient := gateway.NewTestClient(permissions.RoleOwner, tenantA, "owner-user")
+
+	req := buildCreateRequest(t, map[string]any{
+		"agentId":   "my-agent",
+		"name":      "Agent in B",
+		"tenant_id": tenantB.String(),
+	})
+
+	m.handleCreate(context.Background(), ownerClient, req)
+
+	if storeStub.created == nil {
+		t.Fatal("expected creation in tenantB to succeed")
+	}
+	if storeStub.created.TenantID != tenantB {
+		t.Fatalf("expected created agent TenantID = %s, got %s", tenantB, storeStub.created.TenantID)
+	}
+	if store.TenantIDFromContext(storeStub.lastCtx) != tenantB {
+		t.Fatalf("expected Create context to have target tenantB, got %s", store.TenantIDFromContext(storeStub.lastCtx))
+	}
+}
+
+func TestHandleCreate_TargetTenantScope_DuplicateInTargetTenantFails(t *testing.T) {
+	tenantA := uuid.New()
+	tenantB := uuid.New()
+	storeStub := &tenantAwareCaptureStore{
+		agents: map[string]*store.AgentData{
+			tenantB.String() + "/my-agent": {
+				AgentKey: "my-agent",
+				TenantID: tenantB,
+			},
+		},
+	}
+	m := newManagedMethods(t, storeStub)
+
+	// Owner connected with tenantA creates agent in tenantB with name "My Agent" (key: "my-agent") which already exists in B
+	ownerClient, responses := gateway.NewCapturingTestClient(permissions.RoleOwner, tenantA, "owner-user", 10)
+
+	req := buildCreateRequest(t, map[string]any{
+		"name":      "My Agent",
+		"tenant_id": tenantB.String(),
+	})
+
+	m.handleCreate(context.Background(), ownerClient, req)
+
+	if storeStub.created != nil {
+		t.Fatal("expected creation in tenantB to be rejected as duplicate")
+	}
+	select {
+	case raw := <-responses:
+		var errResp protocol.ResponseFrame
+		json.Unmarshal(raw, &errResp)
+		if errResp.Error == nil || errResp.Error.Code != protocol.ErrInvalidRequest {
+			t.Fatalf("expected ErrInvalidRequest, got %v", errResp.Error)
+		}
+	default:
+		t.Fatal("expected error response frame")
 	}
 }

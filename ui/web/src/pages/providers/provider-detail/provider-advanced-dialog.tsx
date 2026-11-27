@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { ConfigGroupHeader } from "@/components/shared/config-group-header";
 import { PROVIDER_TYPES } from "@/constants/providers";
+import { hasClefAccountIdInBase } from "@/schemas/provider.schema";
 import { CLISection } from "../provider-cli-section";
 import { OAuthSection } from "../provider-oauth-section";
 import type { ProviderData, ProviderInput } from "@/types/provider";
@@ -44,6 +45,7 @@ function deriveState(provider: ProviderData) {
       typeof s?.thinking_enabled === "boolean"
         ? (s.thinking_enabled as boolean)
         : null,
+    clefAccountId: (s?.account_id as string) || "",
   };
 }
 
@@ -71,6 +73,8 @@ export function ProviderAdvancedDialog({
   const [acpWorkDir, setAcpWorkDir] = useState(init.acpWorkDir);
   const [numCtx, setNumCtx] = useState(init.numCtx);
   const [thinkingEnabled, setThinkingEnabled] = useState(init.thinkingEnabled);
+  const [clefAccountId, setClefAccountId] = useState(init.clefAccountId);
+  const [error, setError] = useState<string | null>(null);
 
   // Re-sync when dialog opens
   useEffect(() => {
@@ -84,13 +88,15 @@ export function ProviderAdvancedDialog({
     setAcpWorkDir(s.acpWorkDir);
     setNumCtx(s.numCtx);
     setThinkingEnabled(s.thinkingEnabled);
-
+    setClefAccountId(s.clefAccountId);
+    setError(null);
   }, [open, provider]);
 
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     setSaving(true);
+    setError(null);
     try {
       const data: ProviderInput = {
         name: provider.name,
@@ -113,6 +119,20 @@ export function ProviderAdvancedDialog({
           if (numCtx.trim()) settings.num_ctx = parseInt(numCtx.trim(), 10);
           if (thinkingEnabled !== null) settings.thinking_enabled = thinkingEnabled;
           if (Object.keys(settings).length > 0) data.settings = settings;
+        } else if (provider.provider_type === "cloudflare_clef") {
+          const hasIdInBase = hasClefAccountIdInBase(apiBase);
+          if (!clefAccountId.trim() && !hasIdInBase) {
+            setError(t("clef.accountIdRequired"));
+            setSaving(false);
+            return;
+          }
+          const settings: Record<string, unknown> = { ...(provider.settings as Record<string, unknown> || {}) };
+          if (clefAccountId.trim()) {
+            settings.account_id = clefAccountId.trim();
+          } else {
+            delete settings.account_id;
+          }
+          data.settings = settings;
         }
       }
 
@@ -170,6 +190,26 @@ export function ProviderAdvancedDialog({
                   className="text-base md:text-sm"
                 />
               </div>
+              {provider.provider_type === "cloudflare_clef" && (
+                <div className="space-y-2">
+                  <Label htmlFor="clefAccountId">
+                    {t("clef.accountId")} <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="clefAccountId"
+                    value={clefAccountId}
+                    onChange={(e) => {
+                      setClefAccountId(e.target.value);
+                      setError(null);
+                    }}
+                    placeholder={t("clef.accountIdPlaceholder")}
+                    className="text-base md:text-sm"
+                  />
+                  {error && (
+                    <p className="text-sm text-destructive">{error}</p>
+                  )}
+                </div>
+              )}
             </>
           )}
 

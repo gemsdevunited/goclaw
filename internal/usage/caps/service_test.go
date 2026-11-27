@@ -525,3 +525,90 @@ func (s *fakeProviderStore) UpdateProvider(context.Context, uuid.UUID, map[strin
 func (s *fakeProviderStore) DeleteProvider(context.Context, uuid.UUID) error { return nil }
 
 func int64Ptr(v int64) *int64 { return &v }
+
+func TestReservation_ReconcileDecision_PreservesZeroOutputTokens(t *testing.T) {
+	tenantID := uuid.New()
+	ctx := store.WithTenantID(context.Background(), tenantID)
+
+	policy := store.UsageCapPolicy{ID: uuid.New(), TenantID: tenantID, MaxTokens: int64Ptr(1000), Enabled: true}
+	fakeCapStore := &fakeUsageCapStore{
+		policies: []store.UsageCapPolicy{policy},
+	}
+	fakeProvStore := &fakeProviderStore{
+		provider: &store.LLMProviderData{
+			BaseModel:    store.BaseModel{ID: uuid.New()},
+			Name:         "test-decision",
+			ProviderType: store.ProviderTypeSafeJev,
+			APIKey:       "key",
+		},
+	}
+	svc := NewService(fakeCapStore, fakeProvStore)
+
+	res, err := svc.Preflight(ctx, Request{
+		TenantID:        tenantID,
+		ProviderName:    "test-decision",
+		ModelID:         "jev-latest",
+		ReservationKey:  "res-decision-1",
+		MaxOutputTokens: 0,
+	})
+	if err != nil {
+		t.Fatalf("Preflight failed: %v", err)
+	}
+
+	// Decision response legitimately has CompletionTokens = 0
+	decisionResp := &providers.DecisionResponse{
+		Usage: &providers.Usage{
+			PromptTokens:     42,
+			CompletionTokens: 0,
+			TotalTokens:      42,
+		},
+	}
+
+	res.ReconcileDecision(ctx, decisionResp, nil)
+
+	if fakeCapStore.reconciled.ActualTokens != 42 {
+		t.Fatalf("expected 42 actual tokens (0 output tokens preserved), got %d", fakeCapStore.reconciled.ActualTokens)
+	}
+}
+
+func TestReservation_ReconcileDecision_TimeoutPreservesInputTokensAndChargesUncertain(t *testing.T) {
+	tenantID := uuid.New()
+	ctx := store.WithTenantID(context.Background(), tenantID)
+
+	policy := store.UsageCapPolicy{ID: uuid.New(), TenantID: tenantID, MaxTokens: int64Ptr(1000), Enabled: true}
+	fakeCapStore := &fakeUsageCapStore{
+		policies: []store.UsageCapPolicy{policy},
+	}
+	fakeProvStore := &fakeProviderStore{
+		provider: &store.LLMProviderData{
+			BaseModel:    store.BaseModel{ID: uuid.New()},
+			Name:         "test-decision",
+			ProviderType: store.ProviderTypeSafeJev,
+			APIKey:       "key",
+		},
+	}
+	svc := NewService(fakeCapStore, fakeProvStore)
+
+	res, err := svc.Preflight(ctx, Request{
+		TenantID:        tenantID,
+		ProviderName:    "test-decision",
+		ModelID:         "jev-latest",
+		ReservationKey:  "res-decision-timeout",
+		IsDecision:      true,
+		InputText:       "classification state question and rubric",
+		MaxOutputTokens: 0,
+	})
+	if err != nil {
+		t.Fatalf("Preflight failed: %v", err)
+	}
+
+	// Decision call timed out upstream after sending request
+	res.ReconcileDecision(ctx, nil, context.DeadlineExceeded)
+
+	if fakeCapStore.reconciled.Status != "uncertain_timeout" {
+		t.Fatalf("expected status 'uncertain_timeout', got %q", fakeCapStore.reconciled.Status)
+	}
+	if fakeCapStore.reconciled.ActualTokens <= 0 {
+		t.Fatalf("expected input tokens preserved for uncertain timeout, got %d", fakeCapStore.reconciled.ActualTokens)
+	}
+}

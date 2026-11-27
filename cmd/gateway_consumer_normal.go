@@ -16,6 +16,8 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/channels/bitrix24"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/telegram/voiceguard"
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
+	"github.com/nextlevelbuilder/goclaw/internal/providerresolve"
+	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/scheduler"
 	"github.com/nextlevelbuilder/goclaw/internal/sessions"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
@@ -363,11 +365,18 @@ func processNormalMessage(
 			if locale == "" {
 				locale = "en"
 			}
-			classifyCtx := ctx
+			classifyCtx, classifyCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer classifyCancel()
 			if uid := loop.UUID(); uid != uuid.Nil {
 				classifyCtx = store.WithAgentID(classifyCtx, uid)
 			}
-			intent := agent.ClassifyIntentWithUsageCaps(classifyCtx, deps.UsageCaps, loop.Provider(), loop.Model(), msg.Content)
+			resolveDecision := func(c context.Context) providers.DecisionProvider {
+				if deps.ProviderReg == nil || deps.SystemConfigs == nil {
+					return nil
+				}
+				return providerresolve.ResolveDecisionProvider(c, store.TenantIDFromContext(c), deps.ProviderReg, deps.SystemConfigs)
+			}
+			intent := agent.ClassifyIntentWithDecisionResolver(classifyCtx, resolveDecision, deps.UsageCaps, loop.Provider(), loop.Model(), msg.Content)
 			switch intent {
 			case agent.IntentStatusQuery:
 				status := deps.Agents.GetActivity(sessionKey)

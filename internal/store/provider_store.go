@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -36,6 +38,9 @@ const (
 	ProviderBytePlusCoding  = "byteplus_coding" // BytePlus ModelArk Coding Plan
 	ProviderVertex          = "vertex"          // Google Cloud Vertex AI (OAuth2 service account + ADC)
 	ProviderKimiCoding      = "kimi_coding"     // Moonshot Kimi Coding (OpenAI-compat, requires fixed User-Agent)
+	ProviderCloudflareClef  = "cloudflare_clef" // Cloudflare Workers AI Clef System 1 decision model
+	ProviderTypeSafeJev     = "typesafe_jev"    // TypeSafe AI Jev System 1 decision model
+	ProviderOpenAIDecision  = "openai_decision" // OpenAI Decisions API System 1 decision model (gpt-6-luna)
 
 	// MiniMax defaults.
 	MiniMaxDefaultAPIBase = "https://api.minimax.io/v1"
@@ -96,6 +101,9 @@ var ValidProviderTypes = map[string]bool{
 	ProviderBytePlusCoding:  true,
 	ProviderVertex:          true,
 	ProviderKimiCoding:      true,
+	ProviderCloudflareClef:  true,
+	ProviderTypeSafeJev:     true,
+	ProviderOpenAIDecision:  true,
 }
 
 // VertexProviderSettings holds Vertex-specific config stored in llm_providers.settings JSONB.
@@ -172,6 +180,84 @@ func ParseOllamaSettings(settings json.RawMessage) *OllamaSettings {
 		return nil
 	}
 	return &s
+}
+
+// ClefProviderSettings holds Cloudflare Clef-specific config stored in provider settings JSONB.
+type ClefProviderSettings struct {
+	AccountID string `json:"account_id,omitempty"`
+	Model     string `json:"model,omitempty"`
+}
+
+// ParseClefProviderSettings extracts Clef config from settings JSONB.
+func ParseClefProviderSettings(settings json.RawMessage) *ClefProviderSettings {
+	if len(settings) == 0 {
+		return nil
+	}
+	var s ClefProviderSettings
+	if json.Unmarshal(settings, &s) != nil {
+		return nil
+	}
+	return &s
+}
+
+// ResolveClefAccountID extracts the Cloudflare Account ID from provider settings or APIBase.
+func ResolveClefAccountID(p *LLMProviderData) string {
+	if p == nil {
+		return ""
+	}
+	accountID := ""
+	if s := ParseClefProviderSettings(p.Settings); s != nil {
+		accountID = strings.TrimSpace(s.AccountID)
+	}
+	if accountID == "" && p.APIBase != "" {
+		if !strings.Contains(p.APIBase, "/") {
+			accountID = strings.TrimSpace(p.APIBase)
+		} else if idx := strings.Index(p.APIBase, "/accounts/"); idx != -1 {
+			parts := strings.Split(p.APIBase[idx+len("/accounts/"):], "/")
+			if len(parts) > 0 {
+				accountID = strings.TrimSpace(parts[0])
+			}
+		}
+	}
+	return accountID
+}
+
+// DecisionProviderAsChatError is returned when a decision provider is selected as an agent chat provider.
+// Callers translate it with i18n (MsgDecisionProviderNotChat); Error() is the English fallback.
+type DecisionProviderAsChatError struct{ Name string }
+
+func (e *DecisionProviderAsChatError) Error() string {
+	return fmt.Sprintf("decision provider %q cannot be used as an agent chat provider", e.Name)
+}
+
+// ValidateNotDecisionProvider checks that providerName is not a decision provider.
+// If provider exists in tenant DB as a valid chat provider, it returns nil immediately,
+// preventing false positive rejections from master decision providers with the same name.
+func ValidateNotDecisionProvider(ctx context.Context, providerStore ProviderStore, isRegistryDecisionProvider func(ctx context.Context, name string) bool, providerName string) error {
+	if providerName == "" {
+		return nil
+	}
+	if providerStore != nil {
+		p, err := providerStore.GetProviderByName(ctx, providerName)
+		if err == nil && p != nil {
+			if IsDecisionProviderType(p.ProviderType) {
+				return &DecisionProviderAsChatError{Name: providerName}
+			}
+			return nil
+		} else if TenantIDFromContext(ctx) != MasterTenantID {
+			masterCtx := WithTenantID(ctx, MasterTenantID)
+			if pMaster, errMaster := providerStore.GetProviderByName(masterCtx, providerName); errMaster == nil && pMaster != nil {
+				if IsDecisionProviderType(pMaster.ProviderType) {
+					return &DecisionProviderAsChatError{Name: providerName}
+				}
+				return nil
+			}
+		}
+	}
+	if isRegistryDecisionProvider != nil && isRegistryDecisionProvider(ctx, providerName) {
+		return &DecisionProviderAsChatError{Name: providerName}
+	}
+	return nil
 }
 
 // ChatGPTOAuthProviderSettings holds provider-level defaults for Codex account pooling.
@@ -268,6 +354,19 @@ var NoEmbeddingTypes = map[string]bool{
 	ProviderClaudeCLI:       true,
 	ProviderChatGPTOAuth:    true,
 	ProviderVertex:          true, // Vertex embeddings live on a different native endpoint, not on /endpoints/openapi
+	ProviderCloudflareClef:  true,
+	ProviderTypeSafeJev:     true,
+	ProviderOpenAIDecision:  true,
+}
+
+// IsDecisionProviderType returns true if the provider type is a System 1 decision model provider.
+func IsDecisionProviderType(providerType string) bool {
+	switch providerType {
+	case ProviderCloudflareClef, ProviderTypeSafeJev, ProviderOpenAIDecision:
+		return true
+	default:
+		return false
+	}
 }
 
 // ProviderStore manages LLM providers.

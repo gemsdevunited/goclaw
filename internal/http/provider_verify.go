@@ -100,6 +100,55 @@ func (h *ProvidersHandler) handleVerifyProvider(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// System 1 Decision models (Clef, Jev, OpenAI Decisions)
+	if p.ProviderType == store.ProviderCloudflareClef ||
+		p.ProviderType == store.ProviderTypeSafeJev ||
+		p.ProviderType == store.ProviderOpenAIDecision {
+		if p.ProviderType == store.ProviderCloudflareClef && store.ResolveClefAccountID(p) == "" {
+			writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": i18n.T(extractLocale(r), i18n.MsgClefAccountIDRequired)})
+			return
+		}
+		if h.providerReg == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": "no provider registry available"})
+			return
+		}
+		decProv, err := h.providerReg.GetDecisionProviderForTenant(p.TenantID, p.Name)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": "decision provider not registered: " + p.Name})
+			return
+		}
+		if pingMode {
+			writeJSON(w, http.StatusOK, map[string]any{"valid": true})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		resp, err := decProv.Evaluate(ctx, providers.DecisionRequest{
+			Model: req.Model,
+			State: "1 + 1 = 2",
+			Questions: map[string]providers.DecisionQuestion{
+				"verify": {
+					Type:         providers.QuestionTypeNoul,
+					Instructions: "is 1 + 1 equal to 2?",
+				},
+			},
+		})
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": friendlyVerifyError(err)})
+			return
+		}
+		if resp == nil || len(resp.Answers) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": "decision provider returned empty response"})
+			return
+		}
+		if _, ok := resp.GetNoul("verify"); !ok {
+			writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": "decision provider did not return an answer for verification question"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"valid": true})
+		return
+	}
+
 	if h.providerReg == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": "no provider registry available"})
 		return

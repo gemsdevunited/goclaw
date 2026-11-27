@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -318,6 +319,11 @@ func (h *AgentsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		req.Status = store.AgentStatusActive
 	}
 
+	if err := h.validateNotDecisionProvider(r.Context(), req.Provider); err != nil {
+		writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest, err.Error())
+		return
+	}
+
 	if err := validateChatGPTOAuthAgentRouting(
 		r.Context(),
 		h.providers,
@@ -330,6 +336,10 @@ func (h *AgentsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateAgentModelFallback(req.ModelFallback); err != nil {
 		writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgInvalidRequest, err.Error()))
+		return
+	}
+	if err := h.validateModelFallbackProviders(r.Context(), req.ModelFallback); err != nil {
+		writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest, err.Error())
 		return
 	}
 
@@ -522,6 +532,11 @@ func (h *AgentsHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		allowed["model_fallback"] = rawFallback
 	}
 
+	if err := h.validateNotDecisionProvider(r.Context(), validationAgent.Provider); err != nil {
+		writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest, err.Error())
+		return
+	}
+
 	if err := validateChatGPTOAuthAgentRouting(
 		r.Context(),
 		h.providers,
@@ -530,6 +545,10 @@ func (h *AgentsHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	); err != nil {
 		slog.Error("agents.update.validate_routing", "id", id, "error", err)
 		writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgInvalidRequest, err.Error()))
+		return
+	}
+	if err := h.validateModelFallbackProviders(r.Context(), validationAgent.ModelFallback); err != nil {
+		writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest, err.Error())
 		return
 	}
 
@@ -564,6 +583,45 @@ func (h *AgentsHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	emitAudit(h.msgBus, r, "agent.updated", "agent", id.String())
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+func (h *AgentsHandler) validateNotDecisionProvider(ctx context.Context, providerName string) error {
+	var isRegDec func(ctx context.Context, name string) bool
+	if h.providerReg != nil {
+		isRegDec = func(c context.Context, name string) bool {
+			_, err := h.providerReg.GetDecisionProvider(c, name)
+			return err == nil
+		}
+	}
+	err := store.ValidateNotDecisionProvider(ctx, h.providers, isRegDec, providerName)
+
+	if err != nil {
+		var dpErr *store.DecisionProviderAsChatError
+		if errors.As(err, &dpErr) {
+			return errors.New(i18n.T(store.LocaleFromContext(ctx), i18n.MsgDecisionProviderNotChat, dpErr.Name))
+		}
+	}
+	return err
+}
+
+func (h *AgentsHandler) validateModelFallbackProviders(ctx context.Context, raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var cfg store.ModelFallbackConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return fmt.Errorf("invalid model_fallback")
+	}
+	normalized := store.NormalizeModelFallbackConfig(&cfg)
+	if normalized == nil {
+		return nil
+	}
+	for _, candidate := range normalized.Candidates {
+		if err := h.validateNotDecisionProvider(ctx, candidate.Provider); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateAgentModelFallback(raw json.RawMessage) error {

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/oauth"
+	"github.com/nextlevelbuilder/goclaw/internal/providerresolve"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
@@ -295,9 +297,33 @@ func registerProvidersFromDB(registry *providers.Registry, provStore store.Provi
 		slog.Warn("failed to load providers from DB", "error", err)
 		return
 	}
+	// Sort chronologically by update/creation time so that startup registration
+	// preserves runtime sequence and doesn't flip preference due to SQL ORDER BY name.
+	sort.SliceStable(dbProviders, func(i, j int) bool {
+		tI := dbProviders[i].UpdatedAt
+		if tI.IsZero() {
+			tI = dbProviders[i].CreatedAt
+		}
+		tJ := dbProviders[j].UpdatedAt
+		if tJ.IsZero() {
+			tJ = dbProviders[j].CreatedAt
+		}
+		if tI.Equal(tJ) {
+			iExplicit := store.IsDecisionProviderType(dbProviders[i].ProviderType)
+			jExplicit := store.IsDecisionProviderType(dbProviders[j].ProviderType)
+			if iExplicit != jExplicit {
+				return !iExplicit // explicit decision provider comes later, so it takes preference
+			}
+			return dbProviders[i].Name < dbProviders[j].Name
+		}
+		return tI.Before(tJ)
+	})
 	for _, p := range dbProviders {
 		// Claude CLI doesn't need API key
 		if !p.Enabled {
+			if store.IsDecisionProviderType(p.ProviderType) {
+				registry.RegisterDisabledDecisionProviderForTenant(p.TenantID, p.Name)
+			}
 			continue
 		}
 		if p.ProviderType == store.ProviderClaudeCLI {
@@ -440,6 +466,11 @@ func registerProvidersFromDB(registry *providers.Registry, provStore store.Provi
 			prov := providers.NewAIMLAPIProvider(p.Name, p.APIKey, p.APIBase)
 			prov.WithProviderType(p.ProviderType)
 			registry.RegisterForTenant(p.TenantID, prov)
+		case store.ProviderCloudflareClef, store.ProviderTypeSafeJev, store.ProviderOpenAIDecision:
+			if _, err := providerresolve.RegisterDecisionProvider(registry, &p); err != nil {
+				slog.Warn("failed to register decision provider from DB", "name", p.Name, "error", err)
+				continue
+			}
 		default:
 			base, model := openAIProviderDefaults(p.ProviderType, p.APIBase)
 			prov := providers.NewOpenAIProvider(p.Name, p.APIKey, base, model)

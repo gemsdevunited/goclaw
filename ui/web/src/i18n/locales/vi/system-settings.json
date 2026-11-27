@@ -38,6 +38,16 @@
     "teamWorkClassifyInfo": "Khi yêu cầu vượt chuyên môn hoặc nên chia việc, hệ thống dùng embedding làm bằng chứng rồi để model quyết định tự xử lý hay dùng team/delegate workflow. Hệ thống xét cả quyền lead/member; member chỉ được tạo request nhờ hỗ trợ khi team đã bật Yêu cầu thành viên và Tự động phân phối.",
     "teamWorkClassifyEmbeddingRequired": "Cần cấu hình embedding trước khi bật Phân Loại Team Work."
   },
+  "decision": {
+    "title": "Decision Provider",
+    "description": "Model chuyên biệt cho phân loại intent và liên kết vault với độ trễ thấp.",
+    "provider": "Decision Provider",
+    "providerPlaceholder": "Chọn decision provider",
+    "none": "Không dùng (Fallback về chat model)",
+    "hint": "Đánh giá nhanh với độ trễ thấp (ví dụ: TypeSafe Jev, Cloudflare Clef, OpenAI Decisions).",
+    "info": "Khi được cấu hình, phân loại intent và liên kết vault sẽ ưu tiên gọi decision provider (≤2s). Nếu không chọn, hết thời gian hoặc lỗi, hệ thống tự động chuyển sang chat model thông thường.",
+    "unavailable": "không khả dụng"
+  },
   "kg": {
     "title": "Đồ thị tri thức",
     "description": "Trích xuất thực thể và quan hệ từ bộ nhớ agent vào đồ thị tri thức có thể tìm kiếm.",

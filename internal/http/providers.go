@@ -23,6 +23,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
 	"github.com/nextlevelbuilder/goclaw/internal/oauth"
 	"github.com/nextlevelbuilder/goclaw/internal/permissions"
+	"github.com/nextlevelbuilder/goclaw/internal/providerresolve"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/security"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
@@ -366,6 +367,11 @@ func (h *ProvidersHandler) registerInMemory(p *store.LLMProviderData) providerRu
 		prov := providers.NewOllamaProvider(p.Name, base, "llama3.3", numCtx, nil).
 			WithThinkingEnabled(store.ParseThinkingEnabled(p.Settings))
 		h.providerReg.RegisterForTenant(p.TenantID, prov)
+	case store.ProviderCloudflareClef, store.ProviderTypeSafeJev, store.ProviderOpenAIDecision:
+		if _, err := providerresolve.RegisterDecisionProvider(h.providerReg, p); err != nil {
+			slog.Warn("decision: failed to register provider", "name", p.Name, "error", err)
+			return providerRuntimeInvalidConfig
+		}
 	default:
 		base, model := openAIProviderDefaults(p.ProviderType, apiBase)
 		prov := providers.NewOpenAIProvider(p.Name, p.APIKey, base, model)
@@ -492,6 +498,9 @@ func validateProviderURL(rawURL string, providerType string) error {
 	}
 	if providerType == store.ProviderClaudeCLI {
 		return validateClaudeCLIExecutablePath(rawURL)
+	}
+	if providerType == store.ProviderCloudflareClef && !strings.Contains(rawURL, "://") {
+		return nil
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -649,6 +658,13 @@ func (h *ProvidersHandler) handleCreateProvider(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if p.ProviderType == store.ProviderCloudflareClef && store.ResolveClefAccountID(&p) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": i18n.T(locale, i18n.MsgClefAccountIDRequired),
+		})
+		return
+	}
+
 	if err := validateProviderURL(p.APIBase, p.ProviderType); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -771,7 +787,7 @@ func (h *ProvidersHandler) handleUpdateProvider(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	// Strip masked API key — don't overwrite real value with "***"
+	// Strip masked or empty API key — don't overwrite real value with "***" or empty string on edit.
 	if apiKey, ok := updates["api_key"]; ok {
 		if s, _ := apiKey.(string); s == "***" || s == "" {
 			delete(updates, "api_key")
@@ -857,8 +873,16 @@ func (h *ProvidersHandler) handleUpdateProvider(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if candidate.ProviderType == store.ProviderCloudflareClef && store.ResolveClefAccountID(&candidate) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": i18n.T(locale, i18n.MsgClefAccountIDRequired),
+		})
+		return
+	}
+
 	// Track old name before update for registry cleanup
 	var oldName string
+	wasDecision := store.IsDecisionProviderType(currentProvider.ProviderType)
 	if h.providerReg != nil {
 		oldName = currentProvider.Name
 	}
@@ -875,8 +899,21 @@ func (h *ProvidersHandler) handleUpdateProvider(w http.ResponseWriter, r *http.R
 			// Unregister old name if renamed to prevent ghost entries
 			if oldName != "" && oldName != updated.Name {
 				h.providerReg.UnregisterForTenant(updated.TenantID, oldName)
+				if wasDecision {
+					h.providerReg.RemoveDecisionProviderForTenant(updated.TenantID, oldName)
+				}
 			}
-			if !updated.Enabled {
+			if wasDecision || store.IsDecisionProviderType(updated.ProviderType) {
+				// Decision providers (or a type switch to/from one): rebuild runtime state from scratch.
+				h.providerReg.UnregisterForTenant(updated.TenantID, updated.Name)
+				if updated.Enabled {
+					if status := h.registerInMemory(updated); status != providerRuntimeRegistered && store.IsDecisionProviderType(updated.ProviderType) {
+						h.providerReg.RegisterDisabledDecisionProviderForTenant(updated.TenantID, updated.Name)
+					}
+				} else if store.IsDecisionProviderType(updated.ProviderType) {
+					h.providerReg.RegisterDisabledDecisionProviderForTenant(updated.TenantID, updated.Name)
+				}
+			} else if !updated.Enabled {
 				h.providerReg.UnregisterForTenant(updated.TenantID, updated.Name)
 			} else {
 				h.registerInMemory(updated)
@@ -919,6 +956,7 @@ func (h *ProvidersHandler) handleDeleteProvider(w http.ResponseWriter, r *http.R
 	}
 
 	if h.providerReg != nil && providerName != "" {
+		h.providerReg.RemoveDecisionProviderForTenant(providerTenantID, providerName)
 		h.providerReg.UnregisterForTenant(providerTenantID, providerName)
 	}
 	if providerName != "" {

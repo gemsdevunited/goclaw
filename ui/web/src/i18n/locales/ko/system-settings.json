@@ -44,6 +44,16 @@
     "teamWorkClassifyInfo": "요청이 현재 에이전트의 범위를 넘거나 분담이 필요하면 시스템이 embedding을 근거로 사용하고 모델이 직접 처리와 team/delegate 워크플로 중 하나를 결정하게 합니다. 시스템은 lead/member 권한도 확인합니다. member는 팀에서 member request와 auto-dispatch를 모두 켠 경우에만 도움 요청을 만들 수 있습니다.",
     "teamWorkClassifyEmbeddingRequired": "Team Work 분류를 켜려면 먼저 embedding을 설정해야 합니다."
   },
+  "decision": {
+    "title": "디시전 제공자 (Decision Provider)",
+    "description": "의도 분류 및 볼트 링크 연결을 위한 전용 고속 디시전 모델.",
+    "provider": "디시전 제공자",
+    "providerPlaceholder": "디시전 제공자 선택",
+    "none": "없음 (챗 모델로 폴백)",
+    "hint": "고처리량, 저지연 평가 모델 (예: TypeSafe Jev, Cloudflare Clef, OpenAI Decisions).",
+    "info": "설정 시 의도 분류 및 볼트 링크 강화가 이 디시전 제공자를 먼저 호출합니다 (≤2초). 미설정, 타임아웃 또는 오류 발생 시 일반 챗 모델로 안전하게 폴백합니다.",
+    "unavailable": "사용 불가"
+  },
   "kg": {
     "title": "지식 그래프",
     "description": "에이전트 메모리에서 검색 가능한 지식 그래프로 엔티티와 관계를 추출합니다.",

@@ -378,4 +378,9 @@ const (
 	MsgGitCredBlobMissingField         = "error.git_cred_blob_missing_field"         // "blob missing required field %q"
 	MsgGitCredUnsupportedCredType      = "error.git_cred_unsupported_cred_type"      // "credential_type %q is not supported"
 	MsgGitHubAppCredInvalid            = "error.github_app_cred_invalid"             // "GitHub App credential is invalid: %s"
+	MsgDecisionProviderNotChat         = "error.decision_provider_not_chat"          // "decision provider %q cannot be used as an agent chat provider"
+	MsgDecisionProviderNotFound        = "error.decision_provider_not_found"         // "decision provider %q not found"
+	MsgDecisionProviderDisabled        = "error.decision_provider_disabled"          // "decision provider %q is disabled"
+	MsgNotDecisionProvider             = "error.not_decision_provider"               // "provider %q is not a decision provider"
+	MsgClefAccountIDRequired           = "error.clef_account_id_required"            // "Cloudflare account ID is required for the Clef provider"
 )

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -598,5 +599,481 @@ func TestProvidersHandlerUpdateRejectsIncompatibleEmbeddingDimensions(t *testing
 	es := store.ParseEmbeddingSettings(current.Settings)
 	if es == nil || es.Dimensions != 1536 {
 		t.Fatalf("embedding dimensions = %+v, want 1536 preserved", es)
+	}
+}
+
+func TestProvidersHandlerRegisterInMemoryDecisionProvidersUseDBName(t *testing.T) {
+	providerReg := providers.NewRegistry(store.TenantIDFromContext)
+	handler := NewProvidersHandler(newMockProviderStore(), newMockSecretsStore(), providerReg, "")
+	tenantID := uuid.New()
+	ctx := store.WithTenantID(context.Background(), tenantID)
+
+	// Custom named TypeSafe Jev
+	jev := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     tenantID,
+		Name:         "my-custom-jev",
+		ProviderType: store.ProviderTypeSafeJev,
+		APIKey:       "jev-key",
+		Enabled:      true,
+	}
+	handler.registerInMemory(jev)
+
+	gotJev, err := providerReg.GetDecisionProvider(ctx, jev.Name)
+	if err != nil {
+		t.Fatalf("GetDecisionProvider(%q) error = %v, want found under DB name", jev.Name, err)
+	}
+	if gotJev.Name() != jev.Name {
+		t.Fatalf("Name() = %q, want %q", gotJev.Name(), jev.Name)
+	}
+
+	// Also check GetDecisionProviderForTenant directly
+	gotForTenant, err := providerReg.GetDecisionProviderForTenant(tenantID, jev.Name)
+	if err != nil || gotForTenant.Name() != jev.Name {
+		t.Fatalf("GetDecisionProviderForTenant error = %v", err)
+	}
+
+	// Unregistering by DB name removes it
+	providerReg.UnregisterForTenant(tenantID, jev.Name)
+	if _, err := providerReg.GetDecisionProvider(ctx, jev.Name); err == nil {
+		t.Fatalf("expected error after unregistering %q, got nil", jev.Name)
+	}
+}
+
+func TestProvidersHandlerVerifyDecisionPingChecksRegistration(t *testing.T) {
+	token := setupProvidersAdminToken(t)
+	providerStore := newMockProviderStore()
+	providerReg := providers.NewRegistry(store.TenantIDFromContext)
+
+	provider := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     uuid.New(),
+		Name:         "unregistered-clef",
+		ProviderType: store.ProviderCloudflareClef,
+		APIKey:       "clef-token",
+		Enabled:      true,
+		Settings:     json.RawMessage(`{"account_id":"acc123"}`),
+	}
+	if err := providerStore.CreateProvider(context.Background(), provider); err != nil {
+		t.Fatalf("CreateProvider() error = %v", err)
+	}
+
+	handler := NewProvidersHandler(providerStore, newMockSecretsStore(), providerReg, "")
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Provider is in DB but NOT in providerReg (e.g. before in-memory registration or failed startup).
+	// Ping request (empty body)
+	req := httptest.NewRequest(http.MethodPost, "/v1/providers/"+provider.ID.String()+"/verify", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	var resp struct {
+		Valid bool   `json:"valid"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response error = %v", err)
+	}
+	if resp.Valid {
+		t.Fatal("ping returned valid: true for unregistered decision provider, want false")
+	}
+
+	// Now register in memory and test ping again
+	handler.registerInMemory(provider)
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/providers/"+provider.ID.String()+"/verify", nil)
+	req2.Header.Set("Authorization", "Bearer "+token)
+	mux.ServeHTTP(w2, req2)
+
+	var resp2 struct {
+		Valid bool `json:"valid"`
+	}
+	if err := json.NewDecoder(w2.Body).Decode(&resp2); err != nil {
+		t.Fatalf("decode response error = %v", err)
+	}
+	if !resp2.Valid {
+		t.Fatal("ping returned valid: false for registered decision provider, want true")
+	}
+}
+
+func TestProvidersHandlerOpenAICompatDoesNotBecomeDecisionProvider(t *testing.T) {
+	tenantID := uuid.New()
+	ctx := store.WithTenantID(context.Background(), tenantID)
+	providerReg := providers.NewRegistry(store.TenantIDFromContext)
+	handler := NewProvidersHandler(newMockProviderStore(), newMockSecretsStore(), providerReg, "")
+
+	compatJev := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     tenantID,
+		Name:         "compat-jev",
+		ProviderType: store.ProviderOpenAICompat,
+		APIBase:      "https://api.typesafe.ai",
+		APIKey:       "key",
+		Enabled:      true,
+	}
+	handler.registerInMemory(compatJev)
+
+	// Decision provider must NOT be registered for openai_compat URL guessing
+	if _, err := providerReg.GetDecisionProviderForTenant(tenantID, "compat-jev"); err == nil {
+		t.Fatal("expected openai_compat with typesafe URL NOT to become decision provider")
+	}
+	if _, err := providerReg.GetForTenant(tenantID, "compat-jev"); err != nil {
+		t.Fatalf("expected chat provider registered, got err=%v", err)
+	}
+
+	// Register explicit decision provider
+	explicitJev := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     tenantID,
+		Name:         "my-jev",
+		ProviderType: store.ProviderTypeSafeJev,
+		APIBase:      "https://api.typesafe.ai",
+		APIKey:       "key",
+		Enabled:      true,
+	}
+	handler.registerInMemory(explicitJev)
+
+	decProv, err := providerReg.GetDecisionProviderForTenant(tenantID, "my-jev")
+	if err != nil || decProv == nil {
+		t.Fatalf("expected explicit decision provider registered, got err=%v", err)
+	}
+
+	// Unregister by name
+	providerReg.UnregisterForTenant(tenantID, "my-jev")
+	if _, err := providerReg.GetDecisionProvider(ctx, "my-jev"); err == nil {
+		t.Fatalf("expected error after unregistering \"my-jev\", got found")
+	}
+}
+
+func TestProvidersHandlerUpdateEmptyAPIKeyUnregistersFromRuntime(t *testing.T) {
+	token := setupProvidersAdminToken(t)
+	tenantID := uuid.New()
+	providerStore := newMockProviderStore()
+	providerReg := providers.NewRegistry(store.TenantIDFromContext)
+
+	jev := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     tenantID,
+		Name:         "live-jev",
+		ProviderType: store.ProviderTypeSafeJev,
+		APIBase:      "https://api.typesafe.ai",
+		APIKey:       "valid-key",
+		Enabled:      true,
+	}
+	ctx := store.WithTenantID(context.Background(), tenantID)
+	_ = providerStore.CreateProvider(ctx, jev)
+
+	handler := NewProvidersHandler(providerStore, newMockSecretsStore(), providerReg, "")
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Initially register in memory
+	status := handler.registerInMemory(jev)
+	if status != providerRuntimeRegistered {
+		t.Fatalf("registerInMemory status = %v, want registered", status)
+	}
+	if _, err := providerReg.GetDecisionProviderForTenant(tenantID, "live-jev"); err != nil {
+		t.Fatalf("expected live-jev in registry, got err=%v", err)
+	}
+
+	// Update provider: sending empty api_key preserves existing key (safe form submission)
+	body := []byte(`{"api_key": ""}`)
+	req := httptest.NewRequest(http.MethodPut, "/v1/providers/"+jev.ID.String(), bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want 200 OK. Body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify key was preserved and provider remains registered
+	updatedP, err := providerStore.GetProvider(ctx, jev.ID)
+	if err != nil || updatedP.APIKey != "valid-key" {
+		t.Fatalf("expected api_key to be preserved as 'valid-key', got %q", updatedP.APIKey)
+	}
+	if _, err := providerReg.GetDecisionProviderForTenant(tenantID, "live-jev"); err != nil {
+		t.Fatalf("expected live-jev to remain in registry after empty api_key update, err=%v", err)
+	}
+}
+
+func TestProvidersHandlerUpdateSwitchFromDecisionToChatProviderUnregistersDecision(t *testing.T) {
+	saveAndRestoreGlobals(t)
+	dnsResolverFn = stubResolver(map[string][]string{
+		"api.openai.com": {"93.184.216.34"},
+	})
+	token := setupProvidersAdminToken(t)
+	tenantID := uuid.New()
+	providerStore := newMockProviderStore()
+	providerReg := providers.NewRegistry(store.TenantIDFromContext)
+
+	prov := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     tenantID,
+		Name:         "multi-role-prov",
+		ProviderType: store.ProviderTypeSafeJev,
+		APIBase:      "https://api.typesafe.ai",
+		APIKey:       "test-key",
+		Enabled:      true,
+	}
+	ctx := store.WithTenantID(context.Background(), tenantID)
+	_ = providerStore.CreateProvider(ctx, prov)
+
+	handler := NewProvidersHandler(providerStore, newMockSecretsStore(), providerReg, "")
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Initially registered as decision provider
+	status := handler.registerInMemory(prov)
+	if status != providerRuntimeRegistered {
+		t.Fatalf("registerInMemory status = %v, want registered", status)
+	}
+	if _, err := providerReg.GetDecisionProviderForTenant(tenantID, "multi-role-prov"); err != nil {
+		t.Fatalf("expected multi-role-prov in decision registry, got err=%v", err)
+	}
+
+	// Update provider: switch type to openai_compat pointing to standard chat API
+	body := []byte(`{"provider_type": "openai_compat", "api_base": "https://api.openai.com/v1"}`)
+	req := httptest.NewRequest(http.MethodPut, "/v1/providers/"+prov.ID.String(), bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want 200 OK. Body: %s", w.Code, w.Body.String())
+	}
+
+	// 1. Must be removed from decision registry
+	if _, err := providerReg.GetDecisionProviderForTenant(tenantID, "multi-role-prov"); err == nil {
+		t.Fatal("expected multi-role-prov to be unregistered from decision registry after switching to chat provider")
+	}
+
+	// 2. Must be registered in chat provider registry
+	chatProv, err := providerReg.GetForTenant(tenantID, "multi-role-prov")
+	if err != nil {
+		t.Fatalf("expected multi-role-prov in chat registry, got err=%v", err)
+	}
+	if chatProv == nil {
+		t.Fatal("chat provider is nil")
+	}
+}
+
+func TestRegisterInMemory_ChatProviderWithDecisionInNameNotAutoRegistered(t *testing.T) {
+	tenantID := uuid.New()
+	providerReg := providers.NewRegistry(store.TenantIDFromContext)
+	handler := NewProvidersHandler(newMockProviderStore(), newMockSecretsStore(), providerReg, "")
+
+	chatProviders := []string{"my-jev-assistant", "decision-maker-bot", "clef-helper"}
+	for _, name := range chatProviders {
+		p := &store.LLMProviderData{
+			BaseModel:    store.BaseModel{ID: uuid.New()},
+			TenantID:     tenantID,
+			Name:         name,
+			ProviderType: store.ProviderOpenAICompat,
+			APIBase:      "https://api.openai.com/v1",
+			APIKey:       "sk-test",
+			Enabled:      true,
+		}
+		status := handler.registerInMemory(p)
+		if status != providerRuntimeRegistered {
+			t.Fatalf("registerInMemory(%s) status = %v, want registered", name, status)
+		}
+
+		// Must be in chat registry
+		if _, err := providerReg.GetForTenant(tenantID, name); err != nil {
+			t.Fatalf("expected %s in chat registry, got err=%v", name, err)
+		}
+
+		// Must NOT be auto-registered as decision provider
+		if _, err := providerReg.GetDecisionProviderForTenant(tenantID, name); err == nil {
+			t.Fatalf("expected %s NOT to be registered as decision provider, but was found", name)
+		}
+	}
+}
+
+func TestOpenAIDecision_AutoRegisterNormalizesBaseURL(t *testing.T) {
+	tenantID := uuid.New()
+	providerReg := providers.NewRegistry(store.TenantIDFromContext)
+	handler := NewProvidersHandler(newMockProviderStore(), newMockSecretsStore(), providerReg, "")
+
+	p := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     tenantID,
+		Name:         "openai-compat-decisions",
+		ProviderType: store.ProviderOpenAIDecision,
+		APIBase:      "https://api.openai.com/v1/decisions",
+		APIKey:       "sk-test",
+		Enabled:      true,
+	}
+
+	status := handler.registerInMemory(p)
+	if status != providerRuntimeRegistered {
+		t.Fatalf("registerInMemory status = %v, want registered", status)
+	}
+
+	decProv, err := providerReg.GetDecisionProviderForTenant(tenantID, "openai-compat-decisions")
+	if err != nil {
+		t.Fatalf("expected decision provider to be registered, got error: %v", err)
+	}
+
+	// Verify the decision provider does not produce duplicate /decisions in URL
+	if decProv == nil {
+		t.Fatal("decision provider is nil")
+	}
+}
+
+func TestClefProvider_MissingAccountID_Rejected(t *testing.T) {
+	token := setupProvidersAdminToken(t)
+	tenantID := uuid.New()
+	providerStore := newMockProviderStore()
+	providerReg := providers.NewRegistry(store.TenantIDFromContext)
+	handler := NewProvidersHandler(providerStore, newMockSecretsStore(), providerReg, "")
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. handleCreateProvider without Account ID must return 400
+	createBody := []byte(`{
+		"name": "clef-no-account",
+		"provider_type": "cloudflare_clef",
+		"api_key": "some-token"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/providers", bytes.NewReader(createBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("create status = %d, want 400 Bad Request. Body: %s", w.Code, w.Body.String())
+	}
+
+	// 2. registerInMemory without Account ID must return providerRuntimeInvalidConfig and NOT register
+	p := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     tenantID,
+		Name:         "clef-runtime-test",
+		ProviderType: store.ProviderCloudflareClef,
+		APIKey:       "token",
+		Enabled:      true,
+	}
+	status := handler.registerInMemory(p)
+	if status != providerRuntimeInvalidConfig {
+		t.Fatalf("registerInMemory status = %v, want providerRuntimeInvalidConfig", status)
+	}
+	if _, err := providerReg.GetDecisionProviderForTenant(tenantID, "clef-runtime-test"); err == nil {
+		t.Fatal("expected Clef without account ID NOT to be in registry, but was found")
+	}
+
+	// 3. provider_verify on Clef without Account ID must return valid: false (even in ping mode)
+	ctx := store.WithTenantID(context.Background(), tenantID)
+	_ = providerStore.CreateProvider(ctx, p)
+
+	verifyBody := []byte(`{"ping": true}`)
+	vreq := httptest.NewRequest(http.MethodPost, "/v1/providers/"+p.ID.String()+"/verify", bytes.NewReader(verifyBody))
+	vreq.Header.Set("Authorization", "Bearer "+token)
+	vw := httptest.NewRecorder()
+	mux.ServeHTTP(vw, vreq)
+
+	if vw.Code != http.StatusOK {
+		t.Fatalf("verify status = %d, want 200 OK. Body: %s", vw.Code, vw.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(vw.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal verify response: %v", err)
+	}
+	if resp["valid"] == true {
+		t.Fatal("expected valid: false for Clef without account ID, got valid: true")
+	}
+}
+
+type stubRoundTripper func(*http.Request) (*http.Response, error)
+
+func (s stubRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return s(r)
+}
+
+func TestProvidersHandlerVerifyDecisionRequiresValidAnswer(t *testing.T) {
+	token := setupProvidersAdminToken(t)
+	tenantID := uuid.New()
+	ctx := store.WithTenantID(context.Background(), tenantID)
+	providerStore := newMockProviderStore()
+	providerReg := providers.NewRegistry(store.TenantIDFromContext)
+
+	var serverResponse string
+
+	prov := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     tenantID,
+		Name:         "test-verify-dec",
+		ProviderType: store.ProviderTypeSafeJev,
+		APIBase:      "https://api.typesafe.ai",
+		APIKey:       "key",
+		Enabled:      true,
+	}
+	_ = providerStore.CreateProvider(ctx, prov)
+
+	handler := NewProvidersHandler(providerStore, newMockSecretsStore(), providerReg, "")
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	handler.registerInMemory(prov)
+
+	decProv, err := providerReg.GetDecisionProviderForTenant(tenantID, prov.Name)
+	if err != nil {
+		t.Fatalf("failed to get decision provider: %v", err)
+	}
+	if jp, ok := decProv.(*providers.TypeSafeAIJevProvider); ok {
+		jp.WithClient(&http.Client{
+			Transport: stubRoundTripper(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(serverResponse)),
+				}, nil
+			}),
+		})
+	}
+
+	// 1. Server returns empty JSON object {} -> must fail verify
+	serverResponse = `{}`
+	reqEmpty := httptest.NewRequest(http.MethodPost, "/v1/providers/"+prov.ID.String()+"/verify", bytes.NewReader([]byte(`{"model": "jev-latest"}`)))
+	reqEmpty.Header.Set("Authorization", "Bearer "+token)
+	wEmpty := httptest.NewRecorder()
+	mux.ServeHTTP(wEmpty, reqEmpty)
+
+	var respEmpty map[string]any
+	_ = json.Unmarshal(wEmpty.Body.Bytes(), &respEmpty)
+	if respEmpty["valid"] == true {
+		t.Fatalf("expected valid: false when decision model returns empty answers, got %+v", respEmpty)
+	}
+
+	// 1b. Server returns {"answers": {"verify": {}}} with missing noul value -> must fail verify
+	serverResponse = `{"answers": {"verify": {}}}`
+	reqEmptyNoul := httptest.NewRequest(http.MethodPost, "/v1/providers/"+prov.ID.String()+"/verify", bytes.NewReader([]byte(`{"model": "jev-latest"}`)))
+	reqEmptyNoul.Header.Set("Authorization", "Bearer "+token)
+	wEmptyNoul := httptest.NewRecorder()
+	mux.ServeHTTP(wEmptyNoul, reqEmptyNoul)
+
+	var respEmptyNoul map[string]any
+	_ = json.Unmarshal(wEmptyNoul.Body.Bytes(), &respEmptyNoul)
+	if respEmptyNoul["valid"] == true {
+		t.Fatalf("expected valid: false when decision model returns empty answer object {}, got %+v", respEmptyNoul)
+	}
+
+	// 2. Server returns valid answers with "verify" question -> must succeed
+	serverResponse = `{"answers": {"verify": {"noul": 0.99}}}`
+	reqValid := httptest.NewRequest(http.MethodPost, "/v1/providers/"+prov.ID.String()+"/verify", bytes.NewReader([]byte(`{"model": "jev-latest"}`)))
+	reqValid.Header.Set("Authorization", "Bearer "+token)
+	wValid := httptest.NewRecorder()
+	mux.ServeHTTP(wValid, reqValid)
+
+	var respValid map[string]any
+	_ = json.Unmarshal(wValid.Body.Bytes(), &respValid)
+	if respValid["valid"] != true {
+		t.Fatalf("expected valid: true when decision model answers verify question, got %+v", respValid)
 	}
 }

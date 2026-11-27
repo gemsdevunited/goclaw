@@ -38,6 +38,16 @@
     "teamWorkClassifyInfo": "当请求超出当前 Agent 的职责范围或适合拆分协作时，系统使用 embedding 作为证据，并让模型决定自行处理还是使用 team/delegate 工作流。系统还会检查 lead/member 权限；member 只有在团队启用成员请求并开启自动分配时才能创建求助 request。",
     "teamWorkClassifyEmbeddingRequired": "需要先配置 embedding 才能启用 Team Work 分类。"
   },
+  "decision": {
+    "title": "决策模型提供商 (Decision Provider)",
+    "description": "用于意图分类与知识库链接的专用快速决策模型。",
+    "provider": "决策提供商",
+    "providerPlaceholder": "选择决策提供商",
+    "none": "无 (回退到对话模型)",
+    "hint": "高吞吐、低延迟评估模型 (例如 TypeSafe Jev、Cloudflare Clef、OpenAI Decisions)。",
+    "info": "配置后，意图分类与知识库链接将优先调用此决策提供商 (≤2秒)。若未配置、超时或异常，系统将自动回退到常规对话模型。",
+    "unavailable": "不可用"
+  },
   "kg": {
     "title": "知识图谱",
     "description": "从Agent记忆中提取实体和关系到可搜索的知识图谱。",

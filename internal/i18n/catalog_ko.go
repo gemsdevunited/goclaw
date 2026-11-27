@@ -81,12 +81,12 @@ func init() {
 		MsgNotImplemented: "%s은(는) 아직 구현되지 않았습니다",
 
 		// Agent links
-		MsgLinksNotConfigured:   "에이전트 링크가 설정되지 않았습니다",
-		MsgInvalidDirection:     "방향은 outbound, inbound, 또는 bidirectional이어야 합니다",
-		MsgSourceTargetSame:     "소스와 대상은 서로 다른 에이전트여야 합니다",
-		MsgCannotDelegateOpen:   "오픈 에이전트에게는 위임할 수 없습니다 — 사전 정의된 에이전트만 위임 대상이 될 수 있습니다",
-		MsgNoUpdatesProvided:    "업데이트가 제공되지 않았습니다",
-		MsgInvalidLinkStatus:    "상태는 active 또는 disabled여야 합니다",
+		MsgLinksNotConfigured: "에이전트 링크가 설정되지 않았습니다",
+		MsgInvalidDirection:   "방향은 outbound, inbound, 또는 bidirectional이어야 합니다",
+		MsgSourceTargetSame:   "소스와 대상은 서로 다른 에이전트여야 합니다",
+		MsgCannotDelegateOpen: "오픈 에이전트에게는 위임할 수 없습니다 — 사전 정의된 에이전트만 위임 대상이 될 수 있습니다",
+		MsgNoUpdatesProvided:  "업데이트가 제공되지 않았습니다",
+		MsgInvalidLinkStatus:  "상태는 active 또는 disabled여야 합니다",
 
 		// Teams
 		MsgTeamsNotConfigured:   "팀이 설정되지 않았습니다",
@@ -178,10 +178,15 @@ func init() {
 
 		MsgInvalidRole: "잘못된 역할: 허용되는 값은 owner, admin, operator, member, viewer입니다",
 
-		MsgContactIDsRequired:  "contact_ids가 필요합니다",
-		MsgMergeTargetRequired: "tenant_user_id 또는 create_user 중 정확히 하나가 필요합니다",
-		MsgTenantUserNotFound:  "테넌트 사용자를 찾을 수 없습니다",
-		MsgTenantMismatch:      "테넌트 사용자가 이 테넌트에 속하지 않습니다",
-		MsgTenantScopeRequired: "이 작업에는 테넌트 범위가 필요합니다",
+		MsgContactIDsRequired:       "contact_ids가 필요합니다",
+		MsgMergeTargetRequired:      "tenant_user_id 또는 create_user 중 정확히 하나가 필요합니다",
+		MsgTenantUserNotFound:       "테넌트 사용자를 찾을 수 없습니다",
+		MsgTenantMismatch:           "테넌트 사용자가 이 테넌트에 속하지 않습니다",
+		MsgTenantScopeRequired:      "이 작업에는 테넌트 범위가 필요합니다",
+		MsgDecisionProviderNotChat:  "결정 프로바이더 %q 는 에이전트 채팅 프로바이더로 사용할 수 없습니다",
+		MsgDecisionProviderNotFound: "결정 프로바이더 %q 를 찾을 수 없습니다",
+		MsgDecisionProviderDisabled: "결정 프로바이더 %q 가 비활성화되어 있습니다",
+		MsgNotDecisionProvider:      "프로바이더 %q 는 결정 프로바이더가 아닙니다",
+		MsgClefAccountIDRequired:    "Clef 프로바이더에는 Cloudflare 계정 ID가 필요합니다",
 	})
 }

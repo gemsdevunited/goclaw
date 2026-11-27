@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PROVIDER_TYPES, suggestUniqueProviderAlias } from "@/constants/providers";
+import { PROVIDER_TYPES, suggestUniqueProviderAlias, isDecisionProviderType } from "@/constants/providers";
 import { useProviders } from "@/pages/providers/hooks/use-providers";
 import { CLISection } from "@/pages/providers/provider-cli-section";
 import { OAuthSection } from "@/pages/providers/provider-oauth-section";
@@ -152,7 +152,7 @@ export function StepProvider({ onComplete, existingProvider }: StepProviderProps
               <Select value={providerType} onValueChange={handleTypeChange}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {PROVIDER_TYPES.map((t) => (
+                  {PROVIDER_TYPES.filter((t) => !isDecisionProviderType(t.value)).map((t) => (
                     <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
                   ))}
                 </SelectContent>

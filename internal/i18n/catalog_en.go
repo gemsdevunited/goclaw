@@ -369,5 +369,10 @@ func init() {
 		MsgPackagesUpdatesReasonLocked:             "Package database is locked",
 		MsgPackagesUpdatesReasonDiskFull:           "Disk full",
 		MsgPackagesUpdatesReasonHelperUnavailable:  "Privileged helper unavailable",
+		MsgDecisionProviderNotChat:                 "decision provider %q cannot be used as an agent chat provider",
+		MsgDecisionProviderNotFound:                "decision provider %q not found",
+		MsgDecisionProviderDisabled:                "decision provider %q is disabled",
+		MsgNotDecisionProvider:                     "provider %q is not a decision provider",
+		MsgClefAccountIDRequired:                   "Cloudflare account ID is required for the Clef provider",
 	})
 }

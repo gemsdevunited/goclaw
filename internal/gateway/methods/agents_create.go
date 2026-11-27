@@ -88,19 +88,6 @@ func (m *AgentsMethods) handleCreate(ctx context.Context, client *gateway.Client
 	if m.agentStore != nil {
 		// --- DB-backed: create agent in store ---
 
-		// Check if agent already exists in DB
-		if existing, _ := m.agentStore.GetByKey(ctx, agentID); existing != nil {
-			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgAlreadyExists, "agent", agentID)))
-			return
-		}
-
-		// Resolve owner: use first provided ID so external provisioning tools (e.g. goclaw-wizards)
-		// can set a real user as owner at creation time. Falls back to "system" for backward compat.
-		ownerID := "system"
-		if len(params.OwnerIDs) > 0 && params.OwnerIDs[0] != "" {
-			ownerID = params.OwnerIDs[0]
-		}
-
 		// Resolve tenant_id: explicit param for cross-tenant; otherwise inherit from connection scope.
 		var tenantID uuid.UUID
 		if client.IsOwner() {
@@ -117,10 +104,28 @@ func (m *AgentsMethods) handleCreate(ctx context.Context, client *gateway.Client
 		} else {
 			tenantID = client.TenantID()
 		}
+		targetCtx := store.WithTenantID(ctx, tenantID)
+
+		// Check if agent already exists in DB for target tenant
+		if existing, _ := m.agentStore.GetByKey(targetCtx, agentID); existing != nil {
+			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgAlreadyExists, "agent", agentID)))
+			return
+		}
+
+		// Resolve owner: use first provided ID so external provisioning tools (e.g. goclaw-wizards)
+		// can set a real user as owner at creation time. Falls back to "system" for backward compat.
+		ownerID := "system"
+		if len(params.OwnerIDs) > 0 && params.OwnerIDs[0] != "" {
+			ownerID = params.OwnerIDs[0]
+		}
 
 		provider := params.Provider
 		if provider == "" {
 			provider = m.cfg.Agents.Defaults.Provider
+		}
+		if err := m.validateNotDecisionProvider(targetCtx, provider); err != nil {
+			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, err.Error()))
+			return
 		}
 		model := params.Model
 		if model == "" {
@@ -128,24 +133,24 @@ func (m *AgentsMethods) handleCreate(ctx context.Context, client *gateway.Client
 		}
 
 		agentData := &store.AgentData{
-			AgentKey:         agentID,
-			DisplayName:      params.Name,
-			OwnerID:          ownerID,
-			TenantID:         tenantID,
-			AgentType:        agentType,
-			Provider:         provider,
-			Model:            model,
-			Workspace:        ws,
-			ContextWindow:     params.ContextWindow,
-			MaxToolIterations: params.MaxToolIterations,
-			BudgetMonthlyCents: params.BudgetCents,
-			Status:           store.AgentStatusActive,
-			ToolsConfig:      params.ToolsConfig,
-			SubagentsConfig:  params.SubagentsConfig,
-			SandboxConfig:    params.SandboxConfig,
-			MemoryConfig:     params.MemoryConfig,
-			CompactionConfig: params.CompactionConfig,
-			ContextPruning:   params.ContextPruning,
+			AgentKey:            agentID,
+			DisplayName:         params.Name,
+			OwnerID:             ownerID,
+			TenantID:            tenantID,
+			AgentType:           agentType,
+			Provider:            provider,
+			Model:               model,
+			Workspace:           ws,
+			ContextWindow:       params.ContextWindow,
+			MaxToolIterations:   params.MaxToolIterations,
+			BudgetMonthlyCents:  params.BudgetCents,
+			Status:              store.AgentStatusActive,
+			ToolsConfig:         params.ToolsConfig,
+			SubagentsConfig:     params.SubagentsConfig,
+			SandboxConfig:       params.SandboxConfig,
+			MemoryConfig:        params.MemoryConfig,
+			CompactionConfig:    params.CompactionConfig,
+			ContextPruning:      params.ContextPruning,
 			OtherConfig:         params.OtherConfig,
 			Emoji:               params.Emoji,
 			AgentDescription:    params.AgentDescription,
@@ -160,20 +165,20 @@ func (m *AgentsMethods) handleCreate(ctx context.Context, client *gateway.Client
 			ShellDenyGroups:     params.ShellDenyGroups,
 			KGDedupConfig:       params.KGDedupConfig,
 		}
-		if err := m.agentStore.Create(ctx, agentData); err != nil {
+		if err := m.agentStore.Create(targetCtx, agentData); err != nil {
 			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, i18n.T(locale, i18n.MsgFailedToCreate, "agent", fmt.Sprintf("%v", err))))
 			return
 		}
 
 		// Seed context files to DB (skipped for open agents)
-		if _, err := bootstrap.SeedToStore(ctx, m.agentStore, agentData.ID, agentData.AgentType); err != nil {
+		if _, err := bootstrap.SeedToStore(targetCtx, m.agentStore, agentData.ID, agentData.AgentType); err != nil {
 			slog.Warn("failed to seed bootstrap for agent", "agent", agentID, "error", err)
 		}
 
 		// Set identity in DB bootstrap
 		if params.Name != "" || params.Emoji != "" || params.Avatar != "" {
 			content := buildIdentityContent(params.Name, params.Emoji, params.Avatar)
-			if err := m.agentStore.SetAgentContextFile(ctx, agentData.ID, "IDENTITY.md", content); err != nil {
+			if err := m.agentStore.SetAgentContextFile(targetCtx, agentData.ID, "IDENTITY.md", content); err != nil {
 				slog.Warn("failed to set IDENTITY.md", "agent", agentID, "error", err)
 			}
 		}

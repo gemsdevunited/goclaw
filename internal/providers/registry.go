@@ -17,9 +17,11 @@ var MasterTenantID = uuid.Must(uuid.Parse("0193a5b0-7000-7000-8000-000000000001"
 // Registry manages available LLM providers with per-tenant isolation.
 // Providers are keyed by "tenantID/name". Get falls back to master tenant.
 type Registry struct {
-	providers     map[string]Provider
-	mu            sync.RWMutex
-	tenantFromCtx func(context.Context) uuid.UUID // injected to avoid circular import with store
+	providers                 map[string]Provider
+	decisionProviders         map[string]DecisionProvider
+	disabledDecisionProviders map[string]bool
+	mu                        sync.RWMutex
+	tenantFromCtx             func(context.Context) uuid.UUID // injected to avoid circular import with store
 
 	// roundRobinCounters stores shared round-robin state keyed by "tenantID/providerName/modality"
 	// so that ChatGPTOAuthRouter instances (created per-request) share rotation state
@@ -33,9 +35,11 @@ type Registry struct {
 // tenantFromCtx extracts tenant UUID from context (pass store.TenantIDFromContext).
 func NewRegistry(tenantFromCtx func(context.Context) uuid.UUID) *Registry {
 	return &Registry{
-		providers:          make(map[string]Provider),
-		tenantFromCtx:      tenantFromCtx,
-		roundRobinCounters: make(map[string]int),
+		providers:                 make(map[string]Provider),
+		decisionProviders:         make(map[string]DecisionProvider),
+		disabledDecisionProviders: make(map[string]bool),
+		tenantFromCtx:             tenantFromCtx,
+		roundRobinCounters:        make(map[string]int),
 	}
 }
 
@@ -114,6 +118,25 @@ func (r *Registry) UnregisterForTenant(tenantID uuid.UUID, name string) {
 		}
 		delete(r.providers, key)
 	}
+	delete(r.decisionProviders, key)
+}
+
+// UnregisterDecisionProviderForTenant removes a decision provider from a specific tenant and marks it disabled.
+func (r *Registry) UnregisterDecisionProviderForTenant(tenantID uuid.UUID, name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := compoundKey(tenantID, name)
+	delete(r.decisionProviders, key)
+	r.disabledDecisionProviders[key] = true
+}
+
+// RemoveDecisionProviderForTenant completely removes a decision provider and any disabled marker (e.g. on provider deletion).
+func (r *Registry) RemoveDecisionProviderForTenant(tenantID uuid.UUID, name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := compoundKey(tenantID, name)
+	delete(r.decisionProviders, key)
+	delete(r.disabledDecisionProviders, key)
 }
 
 // Get returns a provider by name, using tenant from context (falls back to master).
@@ -194,4 +217,59 @@ func (r *Registry) ListForTenant(tenantID uuid.UUID) []string {
 	}
 
 	return names
+}
+
+// RegisterDecisionProvider adds a DecisionProvider to the registry under master tenant.
+func (r *Registry) RegisterDecisionProvider(provider DecisionProvider) {
+	r.RegisterDecisionProviderForTenant(MasterTenantID, provider)
+}
+
+// RegisterDecisionProviderForTenant adds a DecisionProvider for a specific tenant.
+func (r *Registry) RegisterDecisionProviderForTenant(tenantID uuid.UUID, provider DecisionProvider) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := compoundKey(tenantID, provider.Name())
+	r.decisionProviders[key] = provider
+	delete(r.disabledDecisionProviders, key)
+}
+
+// RegisterDisabledDecisionProviderForTenant records that a tenant has this decision provider configured but disabled,
+// preventing silent fallback to a master provider of the same name.
+func (r *Registry) RegisterDisabledDecisionProviderForTenant(tenantID uuid.UUID, name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := compoundKey(tenantID, name)
+	delete(r.decisionProviders, key)
+	r.disabledDecisionProviders[key] = true
+}
+
+// GetDecisionProvider looks up a DecisionProvider by exact name for the given context.
+func (r *Registry) GetDecisionProvider(ctx context.Context, name string) (DecisionProvider, error) {
+	return r.GetDecisionProviderForTenant(r.tenantFromContext(ctx), name)
+}
+
+// GetDecisionProviderForTenant looks up a DecisionProvider by exact name for a specific tenant.
+// If the tenant explicitly has this provider disabled, it returns an error and does not fall back to master.
+// If not found in the tenant and tenant is not master, it checks the master tenant for a provider of the same name.
+func (r *Registry) GetDecisionProviderForTenant(tenantID uuid.UUID, name string) (DecisionProvider, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// Try direct lookup by key for tenant
+	if p, ok := r.decisionProviders[compoundKey(tenantID, name)]; ok {
+		return p, nil
+	}
+
+	// If this tenant explicitly has this provider disabled, do not fall back to master
+	if r.disabledDecisionProviders[compoundKey(tenantID, name)] {
+		return nil, fmt.Errorf("decision provider %q for tenant %s is disabled", name, tenantID)
+	}
+
+	// Fall back to master tenant if tenant explicitly named a master provider
+	if tenantID != MasterTenantID {
+		if p, ok := r.decisionProviders[compoundKey(MasterTenantID, name)]; ok {
+			return p, nil
+		}
+	}
+	return nil, fmt.Errorf("decision provider %q not found for tenant %s", name, tenantID)
 }

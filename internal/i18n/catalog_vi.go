@@ -369,5 +369,10 @@ func init() {
 		MsgPackagesUpdatesReasonLocked:             "Cơ sở dữ liệu gói đang bị khóa",
 		MsgPackagesUpdatesReasonDiskFull:           "Đĩa đã đầy",
 		MsgPackagesUpdatesReasonHelperUnavailable:  "Dịch vụ đặc quyền không khả dụng",
+		MsgDecisionProviderNotChat:                 "decision provider %q không thể dùng làm provider chat của agent",
+		MsgDecisionProviderNotFound:                "không tìm thấy decision provider %q",
+		MsgDecisionProviderDisabled:                "decision provider %q đã bị tắt",
+		MsgNotDecisionProvider:                     "provider %q không phải là decision provider",
+		MsgClefAccountIDRequired:                   "Cần có Cloudflare account ID cho provider Clef",
 	})
 }

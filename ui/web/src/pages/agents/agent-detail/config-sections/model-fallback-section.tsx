@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { ModelFallbackCandidate, ModelFallbackConfig } from "@/types/agent";
 import type { ProviderData } from "@/types/provider";
+import { isDecisionProviderType } from "@/constants/providers";
 import { SortableFallbackRow } from "./model-fallback-row";
 
 interface ModelFallbackSectionProps {
@@ -43,7 +44,7 @@ export function ModelFallbackSection({
   const candidates = value.candidates ?? [];
   const enabledProviders = useMemo(() => {
     const selectedNames = new Set(candidates.map((candidate) => candidate.provider));
-    return providers.filter((provider) => provider.enabled || selectedNames.has(provider.name));
+    return providers.filter((provider) => !isDecisionProviderType(provider.provider_type) && (provider.enabled || selectedNames.has(provider.name)));
   }, [candidates, providers]);
   const sensors = useSensors(
     useSensor(PointerSensor),

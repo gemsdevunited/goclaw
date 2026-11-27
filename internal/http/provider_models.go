@@ -17,6 +17,7 @@ import (
 type ModelInfo struct {
 	ID        string                         `json:"id"`
 	Name      string                         `json:"name,omitempty"`
+	Category  string                         `json:"category,omitempty"`
 	Reasoning *providers.ReasoningCapability `json:"reasoning,omitempty"`
 }
 
@@ -64,6 +65,21 @@ func (h *ProvidersHandler) handleListProviderModels(w http.ResponseWriter, r *ht
 	// ACP agents don't need an API key — return hardcoded models
 	if p.ProviderType == store.ProviderACP {
 		respond(acpModels())
+		return
+	}
+
+	if p.ProviderType == store.ProviderCloudflareClef {
+		respond(clefModels())
+		return
+	}
+
+	if p.ProviderType == store.ProviderTypeSafeJev {
+		respond(jevModels())
+		return
+	}
+
+	if p.ProviderType == store.ProviderOpenAIDecision {
+		respond(openAIDecisionModels())
 		return
 	}
 

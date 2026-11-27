@@ -29,6 +29,7 @@ export interface ProviderInput {
 export interface ModelInfo {
   id: string;
   name?: string;
+  category?: string;
   reasoning?: ReasoningCapability;
 }
 

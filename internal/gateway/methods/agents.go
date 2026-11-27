@@ -3,6 +3,7 @@ package methods
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 
 	"github.com/nextlevelbuilder/goclaw/internal/agent"
@@ -11,6 +12,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/gateway"
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
 	"github.com/nextlevelbuilder/goclaw/internal/permissions"
+	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
@@ -19,17 +21,44 @@ import (
 // AgentsMethods handles agents.list, agents.create, agents.update, agents.delete,
 // agents.files.list/get/set, agent.identity.get.
 type AgentsMethods struct {
-	agents      *agent.Router
-	cfg         *config.Config
-	cfgPath     string
-	workspace   string
-	agentStore  store.AgentStore
-	interceptor *tools.ContextFileInterceptor // invalidated on file writes
-	eventBus    bus.EventPublisher
+	agents        *agent.Router
+	cfg           *config.Config
+	cfgPath       string
+	workspace     string
+	agentStore    store.AgentStore
+	interceptor   *tools.ContextFileInterceptor // invalidated on file writes
+	eventBus      bus.EventPublisher
+	providerStore store.ProviderStore
+	providerReg   *providers.Registry
 }
 
 func NewAgentsMethods(agents *agent.Router, cfg *config.Config, cfgPath, workspace string, agentStore store.AgentStore, interceptor *tools.ContextFileInterceptor, eventBus bus.EventPublisher) *AgentsMethods {
 	return &AgentsMethods{agents: agents, cfg: cfg, cfgPath: cfgPath, workspace: workspace, agentStore: agentStore, interceptor: interceptor, eventBus: eventBus}
+}
+
+// SetProviders wires the provider store and registry for validating agent model/provider configuration.
+func (m *AgentsMethods) SetProviders(providerStore store.ProviderStore, providerReg *providers.Registry) {
+	m.providerStore = providerStore
+	m.providerReg = providerReg
+}
+
+func (m *AgentsMethods) validateNotDecisionProvider(ctx context.Context, providerName string) error {
+	var isRegDec func(ctx context.Context, name string) bool
+	if m.providerReg != nil {
+		isRegDec = func(c context.Context, name string) bool {
+			_, err := m.providerReg.GetDecisionProvider(c, name)
+			return err == nil
+		}
+	}
+	err := store.ValidateNotDecisionProvider(ctx, m.providerStore, isRegDec, providerName)
+
+	if err != nil {
+		var dpErr *store.DecisionProviderAsChatError
+		if errors.As(err, &dpErr) {
+			return errors.New(i18n.T(store.LocaleFromContext(ctx), i18n.MsgDecisionProviderNotChat, dpErr.Name))
+		}
+	}
+	return err
 }
 
 // isOwnerUser checks if the given user ID is in the configured owner IDs.
