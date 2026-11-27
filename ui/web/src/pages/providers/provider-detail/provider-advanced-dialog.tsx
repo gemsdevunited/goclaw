@@ -122,7 +122,7 @@ export function ProviderAdvancedDialog({
         } else if (provider.provider_type === "cloudflare_clef") {
           const hasIdInBase = hasClefAccountIdInBase(apiBase);
           if (!clefAccountId.trim() && !hasIdInBase) {
-            setError("Cloudflare Account ID is required");
+            setError(t("clef.accountIdRequired"));
             setSaving(false);
             return;
           }
@@ -193,7 +193,7 @@ export function ProviderAdvancedDialog({
               {provider.provider_type === "cloudflare_clef" && (
                 <div className="space-y-2">
                   <Label htmlFor="clefAccountId">
-                    Cloudflare Account ID <span className="text-destructive">*</span>
+                    {t("clef.accountId")} <span className="text-destructive">*</span>
                   </Label>
                   <Input
                     id="clefAccountId"
@@ -202,7 +202,7 @@ export function ProviderAdvancedDialog({
                       setClefAccountId(e.target.value);
                       setError(null);
                     }}
-                    placeholder="e.g. 1a2b3c4d5e6f7g8h9i0j..."
+                    placeholder={t("clef.accountIdPlaceholder")}
                     className="text-base md:text-sm"
                   />
                   {error && (

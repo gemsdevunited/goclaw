@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -100,15 +99,15 @@ func (h *SystemConfigsHandler) handleSet(w http.ResponseWriter, r *http.Request)
 				prov, err = h.providerStore.GetProviderByName(store.WithTenantID(r.Context(), store.MasterTenantID), val)
 			}
 			if err != nil || prov == nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("decision provider %q not found", val)})
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgDecisionProviderNotFound, val)})
 				return
 			}
 			if !prov.Enabled {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("decision provider %q is disabled", val)})
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgDecisionProviderDisabled, val)})
 				return
 			}
 			if !store.IsDecisionProviderType(prov.ProviderType) {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("provider %q is not a decision provider", val)})
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgNotDecisionProvider, val)})
 				return
 			}
 		}

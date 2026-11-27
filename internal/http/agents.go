@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -592,7 +593,15 @@ func (h *AgentsHandler) validateNotDecisionProvider(ctx context.Context, provide
 			return err == nil
 		}
 	}
-	return store.ValidateNotDecisionProvider(ctx, h.providers, isRegDec, providerName)
+	err := store.ValidateNotDecisionProvider(ctx, h.providers, isRegDec, providerName)
+
+	if err != nil {
+		var dpErr *store.DecisionProviderAsChatError
+		if errors.As(err, &dpErr) {
+			return errors.New(i18n.T(store.LocaleFromContext(ctx), i18n.MsgDecisionProviderNotChat, dpErr.Name))
+		}
+	}
+	return err
 }
 
 func (h *AgentsHandler) validateModelFallbackProviders(ctx context.Context, raw json.RawMessage) error {

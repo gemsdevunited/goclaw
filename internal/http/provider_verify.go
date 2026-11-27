@@ -105,7 +105,7 @@ func (h *ProvidersHandler) handleVerifyProvider(w http.ResponseWriter, r *http.R
 		p.ProviderType == store.ProviderTypeSafeJev ||
 		p.ProviderType == store.ProviderOpenAIDecision {
 		if p.ProviderType == store.ProviderCloudflareClef && store.ResolveClefAccountID(p) == "" {
-			writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": "Cloudflare account ID is required for Clef"})
+			writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": i18n.T(extractLocale(r), i18n.MsgClefAccountIDRequired)})
 			return
 		}
 		if h.providerReg == nil {

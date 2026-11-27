@@ -384,5 +384,10 @@
     "failedCreate": "Failed to create provider",
     "failedUpdate": "Failed to update provider",
     "failedDelete": "Failed to delete provider"
+  },
+  "clef": {
+    "accountId": "Cloudflare Account ID",
+    "accountIdPlaceholder": "e.g. 1a2b3c4d5e6f7g8h9i0j...",
+    "accountIdRequired": "Cloudflare Account ID is required"
   }
 }

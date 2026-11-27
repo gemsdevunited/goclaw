@@ -352,5 +352,10 @@
     "failedCreate": "공급자 생성 실패",
     "failedUpdate": "공급자 업데이트 실패",
     "failedDelete": "공급자 삭제 실패"
+  },
+  "clef": {
+    "accountId": "Cloudflare 계정 ID",
+    "accountIdPlaceholder": "예: 1a2b3c4d5e6f7g8h9i0j...",
+    "accountIdRequired": "Cloudflare 계정 ID가 필요합니다"
   }
 }

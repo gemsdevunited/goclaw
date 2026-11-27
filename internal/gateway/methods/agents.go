@@ -3,6 +3,7 @@ package methods
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 
 	"github.com/nextlevelbuilder/goclaw/internal/agent"
@@ -49,7 +50,15 @@ func (m *AgentsMethods) validateNotDecisionProvider(ctx context.Context, provide
 			return err == nil
 		}
 	}
-	return store.ValidateNotDecisionProvider(ctx, m.providerStore, isRegDec, providerName)
+	err := store.ValidateNotDecisionProvider(ctx, m.providerStore, isRegDec, providerName)
+
+	if err != nil {
+		var dpErr *store.DecisionProviderAsChatError
+		if errors.As(err, &dpErr) {
+			return errors.New(i18n.T(store.LocaleFromContext(ctx), i18n.MsgDecisionProviderNotChat, dpErr.Name))
+		}
+	}
+	return err
 }
 
 // isOwnerUser checks if the given user ID is in the configured owner IDs.

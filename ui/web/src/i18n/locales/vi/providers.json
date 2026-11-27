@@ -388,5 +388,10 @@
     "failedCreate": "Không thể tạo provider",
     "failedUpdate": "Không thể cập nhật provider",
     "failedDelete": "Không thể xóa provider"
+  },
+  "clef": {
+    "accountId": "Cloudflare Account ID",
+    "accountIdPlaceholder": "vd: 1a2b3c4d5e6f7g8h9i0j...",
+    "accountIdRequired": "Cần có Cloudflare Account ID"
   }
 }

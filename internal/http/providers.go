@@ -660,7 +660,7 @@ func (h *ProvidersHandler) handleCreateProvider(w http.ResponseWriter, r *http.R
 
 	if p.ProviderType == store.ProviderCloudflareClef && store.ResolveClefAccountID(&p) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "Cloudflare account ID is required for Clef provider",
+			"error": i18n.T(locale, i18n.MsgClefAccountIDRequired),
 		})
 		return
 	}
@@ -875,7 +875,7 @@ func (h *ProvidersHandler) handleUpdateProvider(w http.ResponseWriter, r *http.R
 
 	if candidate.ProviderType == store.ProviderCloudflareClef && store.ResolveClefAccountID(&candidate) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "Cloudflare account ID is required for Clef provider",
+			"error": i18n.T(locale, i18n.MsgClefAccountIDRequired),
 		})
 		return
 	}

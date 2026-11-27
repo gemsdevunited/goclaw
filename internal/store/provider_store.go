@@ -222,6 +222,14 @@ func ResolveClefAccountID(p *LLMProviderData) string {
 	return accountID
 }
 
+// DecisionProviderAsChatError is returned when a decision provider is selected as an agent chat provider.
+// Callers translate it with i18n (MsgDecisionProviderNotChat); Error() is the English fallback.
+type DecisionProviderAsChatError struct{ Name string }
+
+func (e *DecisionProviderAsChatError) Error() string {
+	return fmt.Sprintf("decision provider %q cannot be used as an agent chat provider", e.Name)
+}
+
 // ValidateNotDecisionProvider checks that providerName is not a decision provider.
 // If provider exists in tenant DB as a valid chat provider, it returns nil immediately,
 // preventing false positive rejections from master decision providers with the same name.
@@ -233,21 +241,21 @@ func ValidateNotDecisionProvider(ctx context.Context, providerStore ProviderStor
 		p, err := providerStore.GetProviderByName(ctx, providerName)
 		if err == nil && p != nil {
 			if IsDecisionProviderType(p.ProviderType) {
-				return fmt.Errorf("decision provider %q cannot be used as an agent chat provider", providerName)
+				return &DecisionProviderAsChatError{Name: providerName}
 			}
 			return nil
 		} else if TenantIDFromContext(ctx) != MasterTenantID {
 			masterCtx := WithTenantID(ctx, MasterTenantID)
 			if pMaster, errMaster := providerStore.GetProviderByName(masterCtx, providerName); errMaster == nil && pMaster != nil {
 				if IsDecisionProviderType(pMaster.ProviderType) {
-					return fmt.Errorf("decision provider %q cannot be used as an agent chat provider", providerName)
+					return &DecisionProviderAsChatError{Name: providerName}
 				}
 				return nil
 			}
 		}
 	}
 	if isRegistryDecisionProvider != nil && isRegistryDecisionProvider(ctx, providerName) {
-		return fmt.Errorf("decision provider %q cannot be used as an agent chat provider", providerName)
+		return &DecisionProviderAsChatError{Name: providerName}
 	}
 	return nil
 }

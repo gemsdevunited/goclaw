@@ -43,7 +43,7 @@ export const providerCreateSchema = z
       return true;
     },
     {
-      message: "Cloudflare Account ID is required",
+      message: "clef.accountIdRequired", // i18n key, translated at render,
       path: ["clefAccountId"],
     }
   );
