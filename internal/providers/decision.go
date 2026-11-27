@@ -66,7 +66,6 @@ func (c *ChoiceAnswer) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
-	c.Confidence = aux.Confidence
 	c.Probabilities = aux.Probabilities
 
 	val := ""
@@ -80,6 +79,14 @@ func (c *ChoiceAnswer) UnmarshalJSON(data []byte) error {
 
 	c.Choice = val
 	c.Selected = val
+	var explicit *float64
+	var rawConf struct {
+		Confidence *float64 `json:"confidence"`
+	}
+	if json.Unmarshal(data, &rawConf) == nil {
+		explicit = rawConf.Confidence
+	}
+	c.Confidence = resolveDecisionConfidence(explicit, val, aux.Probabilities)
 	return nil
 }
 
@@ -354,4 +361,18 @@ func ValidateDecisionRequest(req DecisionRequest) error {
 		}
 	}
 	return nil
+}
+
+// resolveDecisionConfidence returns the explicit confidence when the upstream sent one,
+// otherwise the probability of the selected option, otherwise 0 (never assume certainty).
+func resolveDecisionConfidence(explicit *float64, selected string, probs map[string]float64) float64 {
+	if explicit != nil {
+		return *explicit
+	}
+	if selected != "" {
+		if p, ok := probs[selected]; ok {
+			return p
+		}
+	}
+	return 0
 }

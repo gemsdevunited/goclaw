@@ -125,12 +125,6 @@ func ClassifyIntentWithUsageCaps(ctx context.Context, usageCaps *usagecaps.Servi
 // and the caller should fall back to generative chat LLM.
 var ErrDecisionFallback = errors.New("decision fallback to chat")
 
-// ClassifyIntentWithDecision evaluates user intent using a System 1 DecisionProvider.
-func ClassifyIntentWithDecision(ctx context.Context, decisionProv providers.DecisionProvider, userMessage string) (IntentType, bool) {
-	intent, err := ClassifyIntentWithDecisionAndCaps(ctx, decisionProv, nil, userMessage)
-	return intent, err == nil
-}
-
 // ClassifyIntentWithDecisionAndCaps evaluates user intent using a System 1 DecisionProvider,
 // tracking tokens and enforcing budget caps via usageCaps when provided.
 // Returns (intent, nil) on confident match, ErrCapExceeded on cap rejection,
@@ -208,6 +202,12 @@ func ClassifyIntentWithDecisionAndCaps(ctx context.Context, decisionProv provide
 // 2. Fast System 1 DecisionProvider (Clef / Jev) (sub-timeout 2s, 0 completion tokens)
 // 3. Fallback System 2 Generative LLM (remaining time of 10s deadline)
 func ClassifyIntentWithUsageCapsAndDecision(ctx context.Context, decisionProv providers.DecisionProvider, usageCaps *usagecaps.Service, provider providers.Provider, model, userMessage string) IntentType {
+	return ClassifyIntentWithDecisionResolver(ctx, func(context.Context) providers.DecisionProvider { return decisionProv }, usageCaps, provider, model, userMessage)
+}
+
+// ClassifyIntentWithDecisionResolver is like ClassifyIntentWithUsageCapsAndDecision but resolves the
+// decision provider lazily, only after the keyword fast-path misses (avoids a DB lookup per message).
+func ClassifyIntentWithDecisionResolver(ctx context.Context, resolve func(context.Context) providers.DecisionProvider, usageCaps *usagecaps.Service, provider providers.Provider, model, userMessage string) IntentType {
 	var cancel context.CancelFunc
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		ctx, cancel = context.WithTimeout(ctx, intentClassifyTimeout)
@@ -221,6 +221,11 @@ func ClassifyIntentWithUsageCapsAndDecision(ctx context.Context, decisionProv pr
 
 	if ctx.Err() != nil {
 		return IntentNewTask
+	}
+
+	var decisionProv providers.DecisionProvider
+	if resolve != nil {
+		decisionProv = resolve(ctx)
 	}
 
 	// Tier 2: System 1 Decision Model.

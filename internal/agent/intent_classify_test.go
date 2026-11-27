@@ -104,7 +104,7 @@ func (s *stubProvider) ChatStream(_ context.Context, _ providers.ChatRequest, _ 
 }
 
 func (s *stubProvider) DefaultModel() string { return "stub-model" }
-func (s *stubProvider) Name() string          { return "stub" }
+func (s *stubProvider) Name() string         { return "stub" }
 
 func TestClassifyIntent_FastPath_Cancel(t *testing.T) {
 	p := &stubProvider{response: "new_task"} // LLM would say new_task, but fast-path wins
@@ -186,9 +186,9 @@ func (s *stubDecisionProvider) Evaluate(_ context.Context, _ providers.DecisionR
 		},
 	}, nil
 }
-func (s *stubDecisionProvider) Name() string         { return "stub-decision" }
+func (s *stubDecisionProvider) Name() string          { return "stub-decision" }
 func (s *stubDecisionProvider) CanonicalName() string { return "stub-decision" }
-func (s *stubDecisionProvider) DefaultModel() string { return "stub-model" }
+func (s *stubDecisionProvider) DefaultModel() string  { return "stub-model" }
 
 func TestClassifyIntent_WithDecisionProvider(t *testing.T) {
 	// LLM would say new_task, but DecisionProvider says status_query
@@ -408,15 +408,15 @@ func TestIsExactCancelKeyword_WithWhitespace(t *testing.T) {
 
 func TestIsExactCancelKeyword_NonMatches(t *testing.T) {
 	cases := []string{
-		"stop now",           // not exact
-		"please stop",        // not exact
-		"nonstop",            // embedded
-		"stop it",            // not exact
-		"cancel the order",   // not exact
-		"don't stop",         // not exact
-		"",                   // empty
-		"hello",              // unrelated
-		"làm đơn giản thôi",  // contains "thôi" but not exact
+		"stop now",          // not exact
+		"please stop",       // not exact
+		"nonstop",           // embedded
+		"stop it",           // not exact
+		"cancel the order",  // not exact
+		"don't stop",        // not exact
+		"",                  // empty
+		"hello",             // unrelated
+		"làm đơn giản thôi", // contains "thôi" but not exact
 	}
 	for _, msg := range cases {
 		t.Run(msg, func(t *testing.T) {
@@ -424,5 +424,16 @@ func TestIsExactCancelKeyword_NonMatches(t *testing.T) {
 				t.Errorf("%q should NOT be recognized as cancel keyword", msg)
 			}
 		})
+	}
+}
+
+func TestClassifyIntentWithDecisionResolverSkippedOnKeywordHit(t *testing.T) {
+	called := false
+	resolve := func(context.Context) providers.DecisionProvider { called = true; return nil }
+	if got := ClassifyIntentWithDecisionResolver(context.Background(), resolve, nil, nil, "", "stop"); got != IntentCancel {
+		t.Fatalf("expected cancel via keyword, got %q", got)
+	}
+	if called {
+		t.Fatal("resolver must not run when the keyword fast-path matches")
 	}
 }

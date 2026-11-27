@@ -95,6 +95,10 @@ func (h *SystemConfigsHandler) handleSet(w http.ResponseWriter, r *http.Request)
 	if key == providerresolve.DecisionProviderConfigKey && val != "" {
 		if h.providerStore != nil {
 			prov, err := h.providerStore.GetProviderByName(r.Context(), val)
+			if (err != nil || prov == nil) && store.TenantIDFromContext(r.Context()) != store.MasterTenantID {
+				// Same resolution as chat providers: tenant first, then shared master provider.
+				prov, err = h.providerStore.GetProviderByName(store.WithTenantID(r.Context(), store.MasterTenantID), val)
+			}
 			if err != nil || prov == nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("decision provider %q not found", val)})
 				return

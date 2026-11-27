@@ -787,20 +787,8 @@ func (h *ProvidersHandler) handleUpdateProvider(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	// Check for explicit clear_api_key flag
-	clearAPIKey := false
-	if v, ok := updates["clear_api_key"]; ok {
-		if b, _ := v.(bool); b {
-			clearAPIKey = true
-		}
-		delete(updates, "clear_api_key")
-	}
-
 	// Strip masked or empty API key — don't overwrite real value with "***" or empty string on edit.
-	// To explicitly clear the API key, callers must pass clear_api_key: true.
-	if clearAPIKey {
-		updates["api_key"] = ""
-	} else if apiKey, ok := updates["api_key"]; ok {
+	if apiKey, ok := updates["api_key"]; ok {
 		if s, _ := apiKey.(string); s == "***" || s == "" {
 			delete(updates, "api_key")
 		}
@@ -894,6 +882,7 @@ func (h *ProvidersHandler) handleUpdateProvider(w http.ResponseWriter, r *http.R
 
 	// Track old name before update for registry cleanup
 	var oldName string
+	wasDecision := store.IsDecisionProviderType(currentProvider.ProviderType)
 	if h.providerReg != nil {
 		oldName = currentProvider.Name
 	}
@@ -910,18 +899,24 @@ func (h *ProvidersHandler) handleUpdateProvider(w http.ResponseWriter, r *http.R
 			// Unregister old name if renamed to prevent ghost entries
 			if oldName != "" && oldName != updated.Name {
 				h.providerReg.UnregisterForTenant(updated.TenantID, oldName)
+				if wasDecision {
+					h.providerReg.RemoveDecisionProviderForTenant(updated.TenantID, oldName)
+				}
 			}
-			// Always clean up existing runtime entry (both chat and decision) before re-registering
-			h.providerReg.UnregisterForTenant(updated.TenantID, updated.Name)
-			if updated.Enabled {
-				if status := h.registerInMemory(updated); status != providerRuntimeRegistered {
-					h.providerReg.UnregisterForTenant(updated.TenantID, updated.Name)
-					if store.IsDecisionProviderType(updated.ProviderType) {
+			if wasDecision || store.IsDecisionProviderType(updated.ProviderType) {
+				// Decision providers (or a type switch to/from one): rebuild runtime state from scratch.
+				h.providerReg.UnregisterForTenant(updated.TenantID, updated.Name)
+				if updated.Enabled {
+					if status := h.registerInMemory(updated); status != providerRuntimeRegistered && store.IsDecisionProviderType(updated.ProviderType) {
 						h.providerReg.RegisterDisabledDecisionProviderForTenant(updated.TenantID, updated.Name)
 					}
+				} else if store.IsDecisionProviderType(updated.ProviderType) {
+					h.providerReg.RegisterDisabledDecisionProviderForTenant(updated.TenantID, updated.Name)
 				}
-			} else if store.IsDecisionProviderType(updated.ProviderType) {
-				h.providerReg.RegisterDisabledDecisionProviderForTenant(updated.TenantID, updated.Name)
+			} else if !updated.Enabled {
+				h.providerReg.UnregisterForTenant(updated.TenantID, updated.Name)
+			} else {
+				h.registerInMemory(updated)
 			}
 		}
 	}

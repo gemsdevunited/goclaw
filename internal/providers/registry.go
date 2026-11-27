@@ -17,11 +17,11 @@ var MasterTenantID = uuid.Must(uuid.Parse("0193a5b0-7000-7000-8000-000000000001"
 // Registry manages available LLM providers with per-tenant isolation.
 // Providers are keyed by "tenantID/name". Get falls back to master tenant.
 type Registry struct {
-	providers                  map[string]Provider
-	decisionProviders          map[string]DecisionProvider
-	disabledDecisionProviders  map[string]bool
-	mu                         sync.RWMutex
-	tenantFromCtx              func(context.Context) uuid.UUID // injected to avoid circular import with store
+	providers                 map[string]Provider
+	decisionProviders         map[string]DecisionProvider
+	disabledDecisionProviders map[string]bool
+	mu                        sync.RWMutex
+	tenantFromCtx             func(context.Context) uuid.UUID // injected to avoid circular import with store
 
 	// roundRobinCounters stores shared round-robin state keyed by "tenantID/providerName/modality"
 	// so that ChatGPTOAuthRouter instances (created per-request) share rotation state
@@ -272,9 +272,4 @@ func (r *Registry) GetDecisionProviderForTenant(tenantID uuid.UUID, name string)
 		}
 	}
 	return nil, fmt.Errorf("decision provider %q not found for tenant %s", name, tenantID)
-}
-
-// PrimaryDecisionProvider is deprecated. Use providerresolve.ResolveDecisionProvider instead.
-func (r *Registry) PrimaryDecisionProvider(ctx context.Context) DecisionProvider {
-	return nil
 }

@@ -800,22 +800,6 @@ func TestProvidersHandlerUpdateEmptyAPIKeyUnregistersFromRuntime(t *testing.T) {
 	if _, err := providerReg.GetDecisionProviderForTenant(tenantID, "live-jev"); err != nil {
 		t.Fatalf("expected live-jev to remain in registry after empty api_key update, err=%v", err)
 	}
-
-	// Now explicitly clear the key using clear_api_key: true
-	clearBody := []byte(`{"clear_api_key": true}`)
-	clearReq := httptest.NewRequest(http.MethodPut, "/v1/providers/"+jev.ID.String(), bytes.NewReader(clearBody))
-	clearReq.Header.Set("Authorization", "Bearer "+token)
-	clearW := httptest.NewRecorder()
-	mux.ServeHTTP(clearW, clearReq)
-
-	if clearW.Code != http.StatusOK {
-		t.Fatalf("clear update status = %d, want 200 OK. Body: %s", clearW.Code, clearW.Body.String())
-	}
-
-	// Verify the instance was removed from runtime registry after explicit clear
-	if _, err := providerReg.GetDecisionProviderForTenant(tenantID, "live-jev"); err == nil {
-		t.Fatal("expected live-jev to be unregistered from runtime after explicit clear_api_key, but it was still found")
-	}
 }
 
 func TestProvidersHandlerUpdateSwitchFromDecisionToChatProviderUnregistersDecision(t *testing.T) {

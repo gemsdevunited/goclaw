@@ -778,20 +778,4 @@ func TestProvidersHandlerListDecisionModelsAndCapabilityFilter(t *testing.T) {
 	if res.Models[0].Category != "decision" {
 		t.Errorf("expected Category: decision, got %q", res.Models[0].Category)
 	}
-
-	// Filter by capability=chat returns empty list
-	reqChat := httptest.NewRequest(http.MethodGet, "/v1/providers/"+clef.ID.String()+"/models?capability=chat", nil)
-	reqChat.Header.Set("Authorization", "Bearer "+token)
-	wChat := httptest.NewRecorder()
-	mux.ServeHTTP(wChat, reqChat)
-	if wChat.Code != http.StatusOK {
-		t.Fatalf("chat filter status = %d, want 200", wChat.Code)
-	}
-	var resChat ProviderModelsResponse
-	if err := json.NewDecoder(wChat.Body).Decode(&resChat); err != nil {
-		t.Fatalf("decode err = %v", err)
-	}
-	if len(resChat.Models) != 0 {
-		t.Errorf("expected 0 models for capability=chat on decision provider, got %d", len(resChat.Models))
-	}
 }

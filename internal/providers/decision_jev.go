@@ -280,11 +280,6 @@ func (p *TypeSafeAIJevProvider) Evaluate(ctx context.Context, req DecisionReques
 			continue
 		}
 
-		conf := 1.0
-		if item.Confidence != nil {
-			conf = *item.Confidence
-		}
-
 		switch qDef.Type {
 		case QuestionTypeChoice:
 			selected := ""
@@ -298,7 +293,7 @@ func (p *TypeSafeAIJevProvider) Evaluate(ctx context.Context, req DecisionReques
 			parsedAnswers[qKey] = ChoiceAnswer{
 				Choice:        selected,
 				Selected:      selected,
-				Confidence:    conf,
+				Confidence:    resolveDecisionConfidence(item.Confidence, selected, item.Probabilities),
 				Probabilities: item.Probabilities,
 			}
 		case QuestionTypeScore:
@@ -315,7 +310,7 @@ func (p *TypeSafeAIJevProvider) Evaluate(ctx context.Context, req DecisionReques
 			}
 			parsedAnswers[qKey] = ScoreAnswer{
 				Score:         score,
-				Confidence:    conf,
+				Confidence:    resolveDecisionConfidence(item.Confidence, "", nil),
 				Probabilities: item.Probabilities,
 			}
 		case QuestionTypeNoul:

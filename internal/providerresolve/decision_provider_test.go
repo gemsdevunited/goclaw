@@ -254,5 +254,3 @@ func TestClassifyDecisionError(t *testing.T) {
 		}
 	}
 }
-
-

@@ -370,12 +370,13 @@ func processNormalMessage(
 			if uid := loop.UUID(); uid != uuid.Nil {
 				classifyCtx = store.WithAgentID(classifyCtx, uid)
 			}
-			var decisionProv providers.DecisionProvider
-			if deps.ProviderReg != nil && deps.SystemConfigs != nil {
-				tenantID := store.TenantIDFromContext(classifyCtx)
-				decisionProv = providerresolve.ResolveDecisionProvider(classifyCtx, tenantID, deps.ProviderReg, deps.SystemConfigs)
+			resolveDecision := func(c context.Context) providers.DecisionProvider {
+				if deps.ProviderReg == nil || deps.SystemConfigs == nil {
+					return nil
+				}
+				return providerresolve.ResolveDecisionProvider(c, store.TenantIDFromContext(c), deps.ProviderReg, deps.SystemConfigs)
 			}
-			intent := agent.ClassifyIntentWithUsageCapsAndDecision(classifyCtx, decisionProv, deps.UsageCaps, loop.Provider(), loop.Model(), msg.Content)
+			intent := agent.ClassifyIntentWithDecisionResolver(classifyCtx, resolveDecision, deps.UsageCaps, loop.Provider(), loop.Model(), msg.Content)
 			switch intent {
 			case agent.IntentStatusQuery:
 				status := deps.Agents.GetActivity(sessionKey)

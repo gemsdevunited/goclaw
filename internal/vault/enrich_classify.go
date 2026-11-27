@@ -116,6 +116,7 @@ func (w *EnrichWorker) classifyLinks(ctx context.Context, provider providers.Pro
 
 		// Chunk candidates to keep LLM response within max_tokens.
 		var newLinks []store.VaultLink
+		incomplete := false // set when any chunk failed/aborted; never delete old links on partial data
 		for chunkStart := 0; chunkStart < len(allCandidates); chunkStart += classifyChunkSize {
 			chunkEnd := min(chunkStart+classifyChunkSize, len(allCandidates))
 			chunk := allCandidates[chunkStart:chunkEnd]
@@ -147,7 +148,8 @@ func (w *EnrichWorker) classifyLinks(ctx context.Context, provider providers.Pro
 					if w.progress != nil {
 						w.progress.AddError(fmt.Sprintf("cap exceeded for %s: %v", sourceDocID, err))
 					}
-					continue
+					incomplete = true
+					break
 				} else if ctx.Err() != nil {
 					slog.Info("decision: parent context canceled, aborting chunk",
 						"tenant_id", tenantID,
@@ -156,7 +158,7 @@ func (w *EnrichWorker) classifyLinks(ctx context.Context, provider providers.Pro
 						"doc", sourceDocID,
 						"chunk", chunkStart,
 						"duration_ms", durationMs)
-					continue
+					return
 				} else {
 					reason, cleanMsg := providerresolve.ClassifyDecisionError(err)
 					if err == nil && len(res) != len(chunk) {
@@ -183,6 +185,7 @@ func (w *EnrichWorker) classifyLinks(ctx context.Context, provider providers.Pro
 					if w.progress != nil {
 						w.progress.AddError(fmt.Sprintf("classify failed for %s: %v", sourceDocID, err))
 					}
+					incomplete = true
 					continue
 				}
 
@@ -194,11 +197,13 @@ func (w *EnrichWorker) classifyLinks(ctx context.Context, provider providers.Pro
 					raw2, err2 := w.callClassifyWithRetry(ctx, provider, model, system, user+hint)
 					if err2 != nil {
 						slog.Warn("vault.classify: retry_parse_failed", "doc", sourceDocID, "err", err2)
+						incomplete = true
 						continue
 					}
 					parsed, parseErr = parseClassifyResponse(raw2, len(chunk))
 					if parseErr != nil {
 						slog.Warn("vault.classify: parse_still_failed", "doc", sourceDocID, "err", parseErr, "raw_len", len(raw2), "raw", raw2)
+						incomplete = true
 						continue
 					}
 				}
@@ -222,10 +227,13 @@ func (w *EnrichWorker) classifyLinks(ctx context.Context, provider providers.Pro
 			}
 		}
 
-		// Only replace old links if LLM produced valid replacements (avoid data loss on all-SKIP).
+		// Only replace old links if LLM produced valid replacements (avoid data loss on all-SKIP)
+		// and every chunk succeeded (a partial result must not wipe previously classified links).
 		if len(newLinks) > 0 {
-			if err := w.vault.DeleteDocLinksByTypes(ctx, tenantID, sourceDocID, allTypes); err != nil {
-				slog.Warn("vault.classify: delete_old", "doc", sourceDocID, "err", err)
+			if !incomplete {
+				if err := w.vault.DeleteDocLinksByTypes(ctx, tenantID, sourceDocID, allTypes); err != nil {
+					slog.Warn("vault.classify: delete_old", "doc", sourceDocID, "err", err)
+				}
 			}
 			if err := w.vault.CreateLinks(ctx, newLinks); err != nil {
 				slog.Debug("vault.classify: batch_create_links", "from", sourceDocID, "count", len(newLinks), "err", err)

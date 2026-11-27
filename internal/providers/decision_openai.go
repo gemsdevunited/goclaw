@@ -14,7 +14,7 @@ import (
 
 const (
 	// OpenAIDecisionModel is the high-performance decision model specialized for classification and routing.
-	OpenAIDecisionModel = "gpt-6-luna"
+	OpenAIDecisionModel  = "gpt-6-luna"
 	defaultOpenAIBaseURL = "https://api.openai.com/v1"
 )
 
@@ -345,10 +345,6 @@ func (p *OpenAIDecisionProvider) Evaluate(ctx context.Context, req DecisionReque
 			continue
 		}
 
-		conf := 1.0
-		if ans.Confidence != nil {
-			conf = *ans.Confidence
-		}
 		probs := parseOpenAIProbabilities(ans.Probabilities)
 
 		switch qDef.Type {
@@ -359,6 +355,7 @@ func (p *OpenAIDecisionProvider) Evaluate(ctx context.Context, req DecisionReque
 			} else if ans.Selected != nil && *ans.Selected != "" {
 				choiceVal = *ans.Selected
 			}
+			conf := resolveDecisionConfidence(ans.Confidence, choiceVal, probs)
 			parsedAnswers[ans.Name] = ChoiceAnswer{
 				Choice:        choiceVal,
 				Selected:      choiceVal,
@@ -372,7 +369,7 @@ func (p *OpenAIDecisionProvider) Evaluate(ctx context.Context, req DecisionReque
 			}
 			parsedAnswers[ans.Name] = ScoreAnswer{
 				Score:         scoreVal,
-				Confidence:    conf,
+				Confidence:    resolveDecisionConfidence(ans.Confidence, "", nil),
 				Probabilities: probs,
 			}
 		case QuestionTypeNoul:
@@ -391,7 +388,7 @@ func (p *OpenAIDecisionProvider) Evaluate(ctx context.Context, req DecisionReque
 			parsedAnswers[ans.Name] = ChoiceAnswer{
 				Choice:        choiceVal,
 				Selected:      choiceVal,
-				Confidence:    conf,
+				Confidence:    resolveDecisionConfidence(ans.Confidence, choiceVal, probs),
 				Probabilities: probs,
 			}
 		}

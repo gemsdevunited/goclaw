@@ -207,9 +207,9 @@ func (m *mockDecisionProvider) Evaluate(_ context.Context, _ providers.DecisionR
 	}
 	return &providers.DecisionResponse{Answers: m.answers}, nil
 }
-func (m *mockDecisionProvider) Name() string         { return "mock-decision" }
+func (m *mockDecisionProvider) Name() string          { return "mock-decision" }
 func (m *mockDecisionProvider) CanonicalName() string { return "mock-decision" }
-func (m *mockDecisionProvider) DefaultModel() string { return "mock-model" }
+func (m *mockDecisionProvider) DefaultModel() string  { return "mock-model" }
 
 func TestClassifyCandidatesWithDecision(t *testing.T) {
 	source := classifyDoc{

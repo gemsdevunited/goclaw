@@ -113,7 +113,7 @@ func ResolveDecisionProvider(
 			"tenant_id", tenantID, "provider", selectedName, "error", err)
 		return nil
 	}
-	slog.Info("decision: provider resolved",
+	slog.Debug("decision: provider resolved",
 		"tenant_id", tenantID, "provider", dp.Name())
 	return dp
 }
@@ -156,4 +156,3 @@ func ClassifyDecisionError(err error) (reason string, cleanMsg string) {
 	}
 	return "provider_error", "decision evaluation failed"
 }
-
