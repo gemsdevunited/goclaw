@@ -38,6 +38,16 @@
     "teamWorkClassifyInfo": "When a request exceeds the current agent's scope or should be split, the system uses embeddings as evidence and asks the model to decide between direct handling and team/delegate workflow. The system also checks lead/member permissions; members can only create help requests when the team has enabled member requests and auto-dispatch.",
     "teamWorkClassifyEmbeddingRequired": "Configure embeddings before enabling Team Work Classification."
   },
+  "decision": {
+    "title": "Decision Provider",
+    "description": "Specialized fast decision model for intent classification and vault linking.",
+    "provider": "Decision Provider",
+    "providerPlaceholder": "Select decision provider",
+    "none": "None (Fallback to chat model)",
+    "hint": "High-throughput, low-latency evaluation (e.g. TypeSafe Jev, Cloudflare Clef, OpenAI Decisions).",
+    "info": "When configured, intent classification and vault link enrichment will query this decision provider first (≤2s). If unconfigured, timed out, or unavailable, the system safely falls back to standard chat models.",
+    "unavailable": "unavailable"
+  },
   "kg": {
     "title": "Knowledge Graph",
     "description": "Extract entities and relationships from agent memory into a searchable knowledge graph.",

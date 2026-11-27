@@ -42,6 +42,23 @@ export function ProviderStandardFormFields({
         />
       </div>
 
+      {providerType === "cloudflare_clef" && (
+        <div className="space-y-2">
+          <Label htmlFor="clefAccountId">
+            Cloudflare Account ID <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            id="clefAccountId"
+            {...register("clefAccountId")}
+            placeholder="e.g. 1a2b3c4d5e6f7g8h9i0j..."
+            className="text-base md:text-sm"
+          />
+          {errors.clefAccountId && (
+            <p className="text-sm text-destructive">{errors.clefAccountId.message}</p>
+          )}
+        </div>
+      )}
+
       <div className="space-y-2">
         <Label htmlFor="apiKey">{t("form.apiKey")}</Label>
         <Input

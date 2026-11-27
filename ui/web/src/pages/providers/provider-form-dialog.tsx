@@ -86,6 +86,7 @@ export function ProviderFormDialog({ open, onOpenChange, onSubmit, existingProvi
         acpIdleTTL: "",
         acpPermMode: "approve-all",
         acpWorkDir: "",
+        clefAccountId: "",
       });
     }
   }, [open, reset]);
@@ -107,6 +108,13 @@ export function ProviderFormDialog({ open, onOpenChange, onSubmit, existingProvi
       if (data.acpPermMode) settings.perm_mode = data.acpPermMode;
       if (data.acpWorkDir?.trim()) settings.work_dir = data.acpWorkDir.trim();
       if (Object.keys(settings).length > 0) payload.settings = settings;
+    }
+
+    if (data.providerType === "cloudflare_clef" && data.clefAccountId?.trim()) {
+      payload.settings = {
+        ...(payload.settings as Record<string, unknown> || {}),
+        account_id: data.clefAccountId.trim(),
+      };
     }
 
     if (data.apiKey && data.apiKey !== "***") {

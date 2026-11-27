@@ -14,6 +14,7 @@ import { ConfigSection, InfoLabel, numOrUndef } from "./config-section";
 import { useProviders } from "@/pages/providers/hooks/use-providers";
 import { useProviderModels } from "@/pages/providers/hooks/use-provider-models";
 import { useConfigDefaults } from "@/pages/config/hooks/use-config-defaults";
+import { isDecisionProviderType } from "@/constants/providers";
 
 interface SubagentsSectionProps {
   enabled: boolean;
@@ -26,7 +27,10 @@ export function SubagentsSection({ enabled, value, onToggle, onChange }: Subagen
   const { t } = useTranslation("agents");
   const s = "configSections.subagents";
   const { providers } = useProviders();
-  const enabledProviders = providers.filter((p) => p.enabled);
+  const enabledProviders = useMemo(
+    () => providers.filter((p) => p.enabled && !isDecisionProviderType(p.provider_type)),
+    [providers],
+  );
   const defaultProvider = useMemo(() => enabledProviders[0], [enabledProviders]);
   const { models, loading: modelsLoading } = useProviderModels(defaultProvider?.id);
   const d = useConfigDefaults().agents.subagents;

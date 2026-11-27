@@ -20,6 +20,7 @@ import { agentCreateSchema, type AgentCreateFormData } from "@/schemas/agent.sch
 import { AgentIdentityAndModelFields } from "./agent-identity-and-model-fields";
 import { AgentDescriptionSection } from "./agent-description-section";
 import { Label } from "@/components/ui/label";
+import { isDecisionProviderType } from "@/constants/providers";
 import { PromptModeCards, type PromptMode } from "./prompt-mode-cards";
 
 interface AgentCreateDialogProps {
@@ -59,7 +60,7 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
 
   const poolOwnership = useMemo(() => getChatGPTOAuthPoolOwnership(providers), [providers]);
   const enabledProviders = useMemo(
-    () => providers.filter((p) => p.enabled && !poolOwnership.ownerByMember.has(p.name)),
+    () => providers.filter((p) => p.enabled && !isDecisionProviderType(p.provider_type) && !poolOwnership.ownerByMember.has(p.name)),
     [providers, poolOwnership],
   );
   const poolOwnerNames = useMemo(

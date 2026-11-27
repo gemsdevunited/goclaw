@@ -38,6 +38,7 @@ export interface InitState {
   compThreshold: string;
   compKeepRecent: string;
   compMaxTokens: string;
+  decisionProvider: string;
   kgProvider: string;
   kgModel: string;
   kgMinConfidence: string;
@@ -58,6 +59,7 @@ export const DEFAULTS: InitState = {
   teamWorkClassify: false,
   compProvider: "", compModel: "",
   compThreshold: "", compKeepRecent: "", compMaxTokens: "",
+  decisionProvider: "",
   kgProvider: "", kgModel: "", kgMinConfidence: "0.75",
   bgProvider: "", bgModel: "",
   providerRequestTimeoutSec: "",

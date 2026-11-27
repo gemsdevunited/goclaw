@@ -14,6 +14,7 @@ import { useProviders } from "@/pages/providers/hooks/use-providers";
 import { useProviderModels } from "@/pages/providers/hooks/use-provider-models";
 import { useProviderVerify } from "@/pages/providers/hooks/use-provider-verify";
 import { getChatGPTOAuthPoolOwnership } from "@/pages/providers/provider-utils";
+import { isDecisionProviderType } from "@/constants/providers";
 import { InfoLabel } from "./info-label";
 
 interface ProviderModelSelectProps {
@@ -74,6 +75,7 @@ export function ProviderModelSelect({
   const enabledProviders = useMemo(
     () => providers.filter((p) => {
       if (!p.enabled) return false;
+      if (isDecisionProviderType(p.provider_type)) return false;
       // Hide pool members — pool routing is handled via the owner provider
       if (poolOwnership.ownerByMember.has(p.name)) return false;
       if (filterEmbedding) {

@@ -39,7 +39,20 @@ export const PROVIDER_TYPES: ProviderTypeInfo[] = [
   { value: "ollama_cloud", label: "Ollama Cloud", apiBase: "https://ollama.com/v1", placeholder: "" },
   { value: "claude_cli", label: "Claude CLI (Local)", apiBase: "", placeholder: "" },
   { value: "acp", label: "ACP Agent (Subprocess)", apiBase: "", placeholder: "claude" },
+  { value: "cloudflare_clef", label: "Cloudflare Clef (Decision)", apiBase: "", placeholder: "https://api.cloudflare.com/client/v4/accounts" },
+  { value: "typesafe_jev", label: "TypeSafe AI Jev (Decision)", apiBase: "https://api.typesafe.ai", placeholder: "https://api.typesafe.ai" },
+  { value: "openai_decision", label: "OpenAI Decisions API", apiBase: "https://api.openai.com/v1", placeholder: "https://api.openai.com/v1" },
 ];
+
+export const DECISION_PROVIDER_TYPES = new Set([
+  "cloudflare_clef",
+  "typesafe_jev",
+  "openai_decision",
+]);
+
+export function isDecisionProviderType(providerType: string | undefined | null): boolean {
+  return !!providerType && DECISION_PROVIDER_TYPES.has(providerType);
+}
 
 function providerAliasName(value: ProviderAliasSource): string {
   if (typeof value === "string") return value.trim().toLowerCase();
