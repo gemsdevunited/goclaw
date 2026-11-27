@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // testdata/claude_cli_stream_tools.jsonl follows the Claude Code
@@ -219,7 +220,7 @@ func TestClaudeCLITraceAbortClosesOpenSpans(t *testing.T) {
 	tr := newCLITraceTracker(obs, nil)
 	tr.onAssistant(&cliStreamMsg{ID: "m1", Model: "opus", Content: []cliContentBlock{
 		{Type: "tool_use", ID: "t1", Name: "Bash"},
-	}}, "")
+	}}, "", "")
 	tr.abort("context canceled")
 
 	if len(obs.turnEnds) != 1 || obs.turnEnds[0].Error != "context canceled" || obs.turnEnds[0].FinishReason != "error" {
@@ -245,7 +246,7 @@ func TestAllocateCLITurnCostsWithoutModelUsage(t *testing.T) {
 }
 
 func TestParseCLIJSONResultCarriesCost(t *testing.T) {
-	resp, err := parseJSONResponse([]byte(`{"type":"result","subtype":"success","result":"ok","total_cost_usd":0.12,"num_turns":3,"usage":{"input_tokens":5,"output_tokens":7,"cache_read_input_tokens":900}}`), nil)
+	resp, err := parseJSONResponse([]byte(`{"type":"result","subtype":"success","result":"ok","total_cost_usd":0.12,"num_turns":3,"usage":{"input_tokens":5,"output_tokens":7,"cache_read_input_tokens":900}}`), nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,5 +358,101 @@ func TestClaudeCLIChatJSONArrayNestedTrace(t *testing.T) {
 	}
 	if *traced.ProviderTrace != *streamResp.ProviderTrace {
 		t.Fatalf("ProviderTrace json=%+v stream=%+v", traced.ProviderTrace, streamResp.ProviderTrace)
+	}
+}
+
+// testdata/claude_cli_json_real_2.1.331.json is a real (redacted) capture of
+// `claude -p --output-format json --verbose` from the gateway container:
+// 3 API messages, 3 tools (one denied), tool results interleaved with blocks
+// of the same message, per-event timestamps, partial per-message output.
+func TestClaudeCLIRealJSONCapture(t *testing.T) {
+	data, err := os.ReadFile("testdata/claude_cli_json_real_2.1.331.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 11, 27, 9, 17, 3, 0, time.UTC)
+	obs := &recordedObserver{}
+	traced, err := parseJSONResponse(data, obs, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := parseJSONResponse(data, nil, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if traced.Content != plain.Content || !strings.HasPrefix(traced.Content, "`/app` could not be listed") {
+		t.Fatalf("content traced=%q plain=%q", traced.Content, plain.Content)
+	}
+	if *traced.Usage != *plain.Usage || traced.Usage.PromptTokens != 6 || traced.Usage.CompletionTokens != 423 {
+		t.Fatalf("Usage traced=%+v plain=%+v", traced.Usage, plain.Usage)
+	}
+
+	// msg_..9czZ has its second tool_use after the first tool's result:
+	// still one turn, not two.
+	var keys []string
+	for _, s := range obs.turnStarts {
+		keys = append(keys, s.Key)
+	}
+	want := []string{"msg_011ChTBU9czZNKqNk3qh95qk", "msg_011ChTBUGDsFhQk7pUpXpEFm", "msg_011ChTBUP1ebDjZPdGYASGL3"}
+	if fmt.Sprint(keys) != fmt.Sprint(want) {
+		t.Fatalf("turns = %v, want %v", keys, want)
+	}
+	ends := map[string]NestedLLMTurnEnd{}
+	for _, e := range obs.turnEnds {
+		ends[e.Key] = e
+	}
+	first := ends[want[0]]
+	if first.ToolCalls != 2 || first.Usage.CacheCreationTokens != 10729 || first.Usage.CacheReadTokens != 9449 || !first.OutputTokensPartial {
+		t.Errorf("first turn = %+v", first)
+	}
+	if ends[want[1]].ToolCalls != 1 || ends[want[2]].FinishReason != "end_turn" {
+		t.Errorf("turns = %+v", ends)
+	}
+
+	// Times come from event timestamps.
+	if got := obs.turnStarts[0].Start; !got.Equal(start) {
+		t.Errorf("first turn start = %v, want process start", got)
+	}
+	if got := first.End; !got.Equal(time.Date(2026, 11, 27, 9, 17, 5, 283e6, time.UTC)) {
+		t.Errorf("first turn end = %v", got)
+	}
+	if got := obs.turnStarts[1].Start; !got.Equal(time.Date(2026, 11, 27, 9, 17, 5, 335e6, time.UTC)) {
+		t.Errorf("second turn start = %v, want last tool result", got)
+	}
+
+	if len(obs.toolStarts) != 3 || len(obs.toolEnds) != 3 {
+		t.Fatalf("tools = %d/%d", len(obs.toolStarts), len(obs.toolEnds))
+	}
+	toolEnds := map[string]NestedToolCallEnd{}
+	for _, e := range obs.toolEnds {
+		toolEnds[e.Key] = e
+	}
+	if e := toolEnds["toolu_01DmntJJR1j3HyDAsxKTa2RN"]; !e.IsError || !strings.Contains(e.Output, "was blocked") {
+		t.Errorf("denied Bash = %+v", e)
+	}
+	if e := toolEnds["toolu_01UWtsWdPkK8Z6CuUxrxmK7H"]; e.IsError || e.Output != "MISSING" {
+		t.Errorf("Bash = %+v", e)
+	}
+	if obs.toolStarts[2].Name != "Read" || obs.toolStarts[2].Input != `{"file_path":"/etc/hostname"}` {
+		t.Errorf("Read start = %+v", obs.toolStarts[2])
+	}
+
+	// Totals are the CLI's; children keep input/cache exactly, the parent
+	// keeps the output the per-message snapshots miss, and all cost lands on
+	// haiku turns.
+	pt := traced.ProviderTrace
+	if pt.TotalUsage.CacheReadTokens != 51928 || pt.TotalUsage.CacheCreationTokens != 13072 || pt.NumTurns != 4 {
+		t.Errorf("TotalUsage = %+v turns %d", pt.TotalUsage, pt.NumTurns)
+	}
+	rem := pt.RemainderUsage()
+	if rem.PromptTokens != 0 || rem.CacheReadTokens != 0 || rem.CacheCreationTokens != 0 || rem.CompletionTokens != 423-25 {
+		t.Errorf("remainder = %+v", rem)
+	}
+	var sum float64
+	for _, c := range obs.costs {
+		sum += c
+	}
+	if len(obs.costs) != 3 || math.Abs(sum-pt.CostUSD) > 1e-12 || pt.CostUSD <= 0 || pt.RemainderCostUSD() > 1e-12 {
+		t.Errorf("costs = %v total %v remainder %v", obs.costs, pt.CostUSD, pt.RemainderCostUSD())
 	}
 }

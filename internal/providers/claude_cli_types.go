@@ -63,7 +63,8 @@ type cliStreamEvent struct {
 	Message *cliStreamMsg `json:"message,omitempty"` // for type="assistant" / "user"
 	// ParentToolUseID is set on events produced inside a CLI Task subagent.
 	ParentToolUseID string                   `json:"parent_tool_use_id,omitempty"`
-	Result          string                   `json:"result,omitempty"` // for type="result"
+	Timestamp       string                   `json:"timestamp,omitempty"` // RFC 3339, on assistant/user events
+	Result          string                   `json:"result,omitempty"`    // for type="result"
 	Model           string                   `json:"model,omitempty"`
 	CostUSD         float64                  `json:"cost_usd,omitempty"`       // legacy CLI name
 	TotalCostUSD    float64                  `json:"total_cost_usd,omitempty"` // current CLI name

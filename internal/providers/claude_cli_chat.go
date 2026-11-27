@@ -72,6 +72,7 @@ func (p *ClaudeCLIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 		cmd.Stderr = &stderr
 
 		slog.Debug("claude-cli exec", "cmd", fmt.Sprintf("%s %s", p.cliPath, strings.Join(args, " ")), "workdir", workDir)
+		runStart := time.Now()
 		output, err := cmd.Output()
 		if err != nil {
 			if tool, retry := p.noteInvalidDisallowedTool(stderr.String()); retry {
@@ -88,7 +89,7 @@ func (p *ClaudeCLIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 			return nil, fmt.Errorf("claude-cli: %w (stderr: %s)", err, stderr.String())
 		}
 
-		return parseJSONResponse(output, NestedTraceObserverFromContext(ctx))
+		return parseJSONResponse(output, NestedTraceObserverFromContext(ctx), runStart)
 	}
 }
 
@@ -205,7 +206,7 @@ func (p *ClaudeCLIProvider) ChatStream(ctx context.Context, req ChatRequest, onC
 				if ev.Message == nil {
 					continue
 				}
-				tracker.onAssistant(ev.Message, ev.ParentToolUseID)
+				tracker.onAssistant(ev.Message, ev.ParentToolUseID, ev.Timestamp)
 				text, thinking := extractStreamContent(ev.Message)
 				if text != "" {
 					contentBuf.WriteString(text)
@@ -216,7 +217,7 @@ func (p *ClaudeCLIProvider) ChatStream(ctx context.Context, req ChatRequest, onC
 				}
 
 			case "user":
-				tracker.onUser(ev.Message, ev.ParentToolUseID)
+				tracker.onUser(ev.Message, ev.ParentToolUseID, ev.Timestamp)
 
 			case "result":
 				resultEv = &ev

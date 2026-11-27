@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // parseJSONResponse parses the CLI JSON output into a ChatResponse.
 // obs (may be nil) receives nested turn/tool callbacks replayed from the
 // event array; see parseJSONArray.
-func parseJSONResponse(data []byte, obs NestedTraceObserver) (*ChatResponse, error) {
+func parseJSONResponse(data []byte, obs NestedTraceObserver, start time.Time) (*ChatResponse, error) {
 	// Try parsing as JSON array first (CLI may output all events as a single array).
-	if resp := parseJSONArray(data, obs); resp != nil {
+	if resp := parseJSONArray(data, obs, start); resp != nil {
 		return resp, nil
 	}
 
@@ -44,9 +45,9 @@ func parseJSONResponse(data []byte, obs NestedTraceObserver) (*ChatResponse, err
 // `--output-format json --verbose` prints every stream event in one array once
 // the run ends. The events are replayed through cliTraceTracker so the trace
 // gets the same turns, tool calls, tokens and cost as the stream-json path.
-// The array has no timestamps, so replayed spans all start and end when the
-// CLI process exits.
-func parseJSONArray(data []byte, obs NestedTraceObserver) *ChatResponse {
+// Span times come from each event's "timestamp"; start (the process start)
+// opens the first turn. Events without a timestamp fall back to parse time.
+func parseJSONArray(data []byte, obs NestedTraceObserver, start time.Time) *ChatResponse {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || trimmed[0] != '[' {
 		return nil
@@ -114,13 +115,16 @@ func parseJSONArray(data []byte, obs NestedTraceObserver) *ChatResponse {
 		resultEv = &events[resultIdx]
 	}
 	tracker := newCLITraceTracker(obs, nil)
+	if !start.IsZero() {
+		tracker.runStart = start.UTC()
+	}
 	for i := range events {
 		ev := &events[i]
 		switch ev.Type {
 		case "assistant":
-			tracker.onAssistant(ev.Message, ev.ParentToolUseID)
+			tracker.onAssistant(ev.Message, ev.ParentToolUseID, ev.Timestamp)
 		case "user":
-			tracker.onUser(ev.Message, ev.ParentToolUseID)
+			tracker.onUser(ev.Message, ev.ParentToolUseID, ev.Timestamp)
 		}
 	}
 

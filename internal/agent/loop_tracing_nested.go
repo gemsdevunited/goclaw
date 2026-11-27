@@ -155,6 +155,9 @@ func (o *nestedSpanObserver) LLMTurnEnd(t providers.NestedLLMTurnEnd) {
 	if t.ToolCalls > 0 {
 		meta["tool_calls"] = t.ToolCalls
 	}
+	if t.OutputTokensPartial {
+		meta["output_tokens_partial"] = true
+	}
 	updates["metadata"] = mustJSON(meta)
 	if t.Error != "" {
 		updates["status"] = store.SpanStatusError

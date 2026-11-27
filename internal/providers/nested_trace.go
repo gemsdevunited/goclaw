@@ -45,6 +45,9 @@ type NestedLLMTurnEnd struct {
 	ToolCalls    int
 	FinishReason string
 	Error        string
+	// OutputTokensPartial means Usage.CompletionTokens is a mid-stream
+	// snapshot (Claude CLI); the run total is on the parent span.
+	OutputTokensPartial bool
 }
 
 // NestedToolCallStart opens one tool execution inside the provider's loop.

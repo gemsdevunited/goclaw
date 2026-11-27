@@ -1,6 +1,8 @@
 package providers
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,6 +17,15 @@ import (
 // response arrives as several events with the same message.id and the same
 // usage. Turns are keyed by message.id to avoid counting usage twice.
 //
+// The CLI runs a tool as soon as its block is complete, so tool_result
+// events can arrive between blocks of the same message (seen with CLI
+// 2.1.331). A tool result therefore does not end a turn; the next message
+// id in the lane, the Task result (subagent lanes) or the end of the run does.
+//
+// Per-message usage is a snapshot taken when the first block streams:
+// input and cache counts are final, output_tokens is not. The CLI's result
+// usage has the real total, so the parent span keeps the missing output.
+//
 // Events from a CLI Task subagent carry parent_tool_use_id; each value is its
 // own lane so subagent turns nest under the Task tool call.
 //
@@ -27,6 +38,7 @@ type cliTraceTracker struct {
 	lanes     map[string]*cliTraceLane
 	tools     map[string]*cliTraceTool // open + closed, by tool_use id
 	turns     []*cliTraceTurn          // closed turns, in close order
+	closed    map[string]bool          // keys of closed turns
 	anonTurns int
 }
 
@@ -61,7 +73,18 @@ func newCLITraceTracker(obs NestedTraceObserver, now func() time.Time) *cliTrace
 		runStart: start,
 		lanes:    map[string]*cliTraceLane{},
 		tools:    map[string]*cliTraceTool{},
+		closed:   map[string]bool{},
 	}
+}
+
+// eventTime returns the event's own timestamp, or now when it has none.
+func (t *cliTraceTracker) eventTime(ts string) time.Time {
+	if ts != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return t.now()
 }
 
 func (t *cliTraceTracker) lane(parent string) *cliTraceLane {
@@ -80,14 +103,20 @@ func (t *cliTraceTracker) lane(parent string) *cliTraceLane {
 }
 
 // onAssistant handles one "assistant" stream event.
-func (t *cliTraceTracker) onAssistant(msg *cliStreamMsg, parent string) {
+func (t *cliTraceTracker) onAssistant(msg *cliStreamMsg, parent, ts string) {
 	if msg == nil {
 		return
 	}
-	now := t.now()
+	now := t.eventTime(ts)
 	l := t.lane(parent)
 	if l.cur != nil && msg.ID != "" && l.cur.key != msg.ID {
 		t.closeTurn(l, "")
+	}
+	if msg.ID != "" && t.closed[msg.ID] {
+		// Late block of a turn already closed: keep its tool calls, but
+		// never reopen the turn (that would count its usage twice).
+		t.startTools(msg, parent, nil, now)
+		return
 	}
 	if l.cur == nil {
 		key := msg.ID
@@ -121,30 +150,44 @@ func (t *cliTraceTracker) onAssistant(msg *cliStreamMsg, parent string) {
 			turn.text.WriteString(b.Text)
 		case "thinking":
 			turn.thinking.WriteString(b.Thinking)
-		case "tool_use":
-			if b.ID == "" {
-				continue
-			}
-			if _, seen := t.tools[b.ID]; seen {
-				continue
-			}
-			t.tools[b.ID] = &cliTraceTool{start: now}
+		}
+	}
+	t.startTools(msg, parent, turn, now)
+}
+
+// startTools opens a tool call for each new tool_use block in msg.
+func (t *cliTraceTracker) startTools(msg *cliStreamMsg, parent string, turn *cliTraceTurn, now time.Time) {
+	for i := range msg.Content {
+		b := &msg.Content[i]
+		if b.Type != "tool_use" || b.ID == "" {
+			continue
+		}
+		if _, seen := t.tools[b.ID]; seen {
+			continue
+		}
+		t.tools[b.ID] = &cliTraceTool{start: now}
+		if turn != nil {
 			turn.toolCalls++
-			if t.obs != nil {
-				t.obs.ToolCallStart(NestedToolCallStart{
-					Key: b.ID, ParentKey: parent, Name: b.Name, Input: string(b.Input), Start: now,
-				})
+		}
+		if t.obs != nil {
+			input := string(b.Input)
+			var compact bytes.Buffer
+			if json.Compact(&compact, b.Input) == nil {
+				input = compact.String()
 			}
+			t.obs.ToolCallStart(NestedToolCallStart{
+				Key: b.ID, ParentKey: parent, Name: b.Name, Input: input, Start: now,
+			})
 		}
 	}
 }
 
 // onUser handles one "user" stream event (tool results fed back to the model).
-func (t *cliTraceTracker) onUser(msg *cliStreamMsg, parent string) {
+func (t *cliTraceTracker) onUser(msg *cliStreamMsg, parent, ts string) {
 	if msg == nil {
 		return
 	}
-	now := t.now()
+	now := t.eventTime(ts)
 	l := t.lane(parent)
 	hasResult := false
 	for i := range msg.Content {
@@ -168,7 +211,8 @@ func (t *cliTraceTracker) onUser(msg *cliStreamMsg, parent string) {
 		}
 	}
 	if hasResult {
-		t.closeTurn(l, "")
+		// The next request is sent after the latest tool result; the
+		// current message may still be streaming, so it stays open.
 		l.boundary = now
 	}
 }
@@ -180,6 +224,7 @@ func (t *cliTraceTracker) closeTurn(l *cliTraceLane, errMsg string) {
 	}
 	l.cur = nil
 	t.turns = append(t.turns, turn)
+	t.closed[turn.key] = true
 	if t.obs == nil {
 		return
 	}
@@ -203,6 +248,8 @@ func (t *cliTraceTracker) closeTurn(l *cliTraceLane, errMsg string) {
 		ToolCalls:    turn.toolCalls,
 		FinishReason: finish,
 		Error:        errMsg,
+
+		OutputTokensPartial: true,
 	})
 }
 
@@ -279,8 +326,8 @@ func (t *cliTraceTracker) finish(ev *cliStreamEvent) *ProviderTrace {
 		return pt
 	}
 	if costs := allocateCLITurnCosts(t.turns, pt.CostUSD, ev.ModelUsage); len(costs) > 0 {
-		for _, c := range costs {
-			pt.Nested.CostUSD += c
+		for _, turn := range t.turns { // fixed order: stable float sum
+			pt.Nested.CostUSD += costs[turn.key]
 		}
 		t.obs.TurnCosts(costs)
 	}
