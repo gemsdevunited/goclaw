@@ -185,30 +185,41 @@ func (l *Loop) emitLLMSpanEnd(ctx context.Context, spanID uuid.UUID, start time.
 		updates["status"] = store.SpanStatusError
 		updates["error"] = callErr.Error()
 	} else if resp != nil {
-		if resp.Usage != nil {
-			updates["input_tokens"] = resp.Usage.PromptTokens
-			updates["output_tokens"] = resp.Usage.CompletionTokens
-			hasMeta := resp.Usage.CacheCreationTokens > 0 || resp.Usage.CacheReadTokens > 0 || resp.Usage.ThinkingTokens > 0 || resp.Usage.PromptTokensIncludeCachedSegments
+		// Providers with their own loop (Claude CLI) report trace totals
+		// separately; child spans already hold part of them, so this span
+		// records only the remainder.
+		usage, providerCost, runMeta := llmSpanUsage(resp)
+		if usage != nil {
+			updates["input_tokens"] = usage.PromptTokens
+			updates["output_tokens"] = usage.CompletionTokens
+			hasMeta := usage.CacheCreationTokens > 0 || usage.CacheReadTokens > 0 || usage.ThinkingTokens > 0 || usage.PromptTokensIncludeCachedSegments || runMeta != nil
 			if hasMeta {
 				meta := map[string]any{}
-				if resp.Usage.CacheCreationTokens > 0 {
-					meta["cache_creation_tokens"] = resp.Usage.CacheCreationTokens
+				if usage.CacheCreationTokens > 0 {
+					meta["cache_creation_tokens"] = usage.CacheCreationTokens
 				}
-				if resp.Usage.CacheReadTokens > 0 {
-					meta["cache_read_tokens"] = resp.Usage.CacheReadTokens
+				if usage.CacheReadTokens > 0 {
+					meta["cache_read_tokens"] = usage.CacheReadTokens
 				}
-				if resp.Usage.ThinkingTokens > 0 {
-					meta["thinking_tokens"] = resp.Usage.ThinkingTokens
+				if usage.ThinkingTokens > 0 {
+					meta["thinking_tokens"] = usage.ThinkingTokens
 				}
-				if resp.Usage.PromptTokensIncludeCachedSegments {
+				if usage.PromptTokensIncludeCachedSegments {
 					meta["prompt_tokens_include_cached_segments"] = true
+				}
+				if runMeta != nil {
+					meta["provider_run"] = runMeta
 				}
 				if b, err := json.Marshal(meta); err == nil {
 					spanMetadata = b
 				}
 			}
 		}
-		if cost := l.calculateLLMCost(ctx, spanOpts.provider, spanOpts.model, resp.Usage); cost > 0 {
+		if providerCost != nil {
+			if *providerCost > 0 {
+				updates["total_cost"] = *providerCost
+			}
+		} else if cost := l.calculateLLMCost(ctx, spanOpts.provider, spanOpts.model, usage); cost > 0 {
 			updates["total_cost"] = cost
 		}
 		updates["finish_reason"] = resp.FinishReason
@@ -242,6 +253,42 @@ func (l *Loop) emitLLMSpanEnd(ctx context.Context, spanID uuid.UUID, start time.
 	}
 
 	collector.EmitSpanUpdate(spanID, traceID, updates)
+}
+
+// llmSpanUsage picks the usage and cost an LLM span records.
+//
+// Regular providers: resp.Usage, and cost is computed from pricing
+// (providerCost nil). Providers that set ProviderTrace: their own totals
+// (cache included) minus what child spans recorded; when the provider
+// reported a cost, the remainder of that cost is used instead of pricing.
+// runMeta holds the provider's run totals for the span metadata.
+func llmSpanUsage(resp *providers.ChatResponse) (usage *providers.Usage, providerCost *float64, runMeta map[string]any) {
+	pt := resp.ProviderTrace
+	if pt == nil {
+		return resp.Usage, nil, nil
+	}
+	rem := pt.RemainderUsage()
+	usage = &rem
+	if pt.CostUSD > 0 {
+		c := pt.RemainderCostUSD()
+		providerCost = &c
+	}
+	runMeta = map[string]any{
+		"input_tokens":          pt.TotalUsage.PromptTokens,
+		"output_tokens":         pt.TotalUsage.CompletionTokens,
+		"cache_read_tokens":     pt.TotalUsage.CacheReadTokens,
+		"cache_creation_tokens": pt.TotalUsage.CacheCreationTokens,
+		"cost_usd":              pt.CostUSD,
+		"nested_llm_calls":      pt.Nested.LLMTurns,
+		"nested_tool_calls":     pt.Nested.ToolCalls,
+	}
+	if pt.NumTurns > 0 {
+		runMeta["num_turns"] = pt.NumTurns
+	}
+	if pt.DurationAPIMS > 0 {
+		runMeta["duration_api_ms"] = pt.DurationAPIMS
+	}
+	return usage, providerCost, runMeta
 }
 
 // ---------------------------------------------------------------------------
