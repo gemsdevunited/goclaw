@@ -451,7 +451,10 @@ func (s *PGTracingStore) BatchUpdateTraceAggregates(ctx context.Context, traceID
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE traces SET
 			span_count = (SELECT COUNT(*) FROM spans WHERE trace_id = $1),
-			llm_call_count = (SELECT COUNT(*) FROM spans WHERE trace_id = $1 AND span_type = 'llm_call'),
+			-- A provider-run wrapper span (claude-cli) is not an API call; its
+			-- child llm_call spans are. Its tokens and cost still count below.
+			llm_call_count = (SELECT COUNT(*) FROM spans WHERE trace_id = $1 AND span_type = 'llm_call'
+				AND NOT COALESCE((metadata->'provider_run'->>'nested_llm_calls')::int, 0) > 0),
 			tool_call_count = (SELECT COUNT(*) FROM spans WHERE trace_id = $1 AND span_type = 'tool_call'),
 			total_input_tokens = COALESCE((SELECT SUM(input_tokens) FROM spans WHERE trace_id = $1 AND span_type IN ('llm_call', 'tool_call') AND input_tokens IS NOT NULL), 0),
 			total_output_tokens = COALESCE((SELECT SUM(output_tokens) FROM spans WHERE trace_id = $1 AND span_type IN ('llm_call', 'tool_call') AND output_tokens IS NOT NULL), 0),

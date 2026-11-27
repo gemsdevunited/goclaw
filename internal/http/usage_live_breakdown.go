@@ -62,7 +62,7 @@ func (h *UsageHandler) queryLiveSpanBreakdown(r *http.Request, from, to time.Tim
 		COALESCE(SUM(CAST(COALESCE(NULLIF(s.metadata->>'cache_creation_tokens', ''), '0') AS INTEGER)), 0),
 		COALESCE(SUM(COALESCE(s.total_cost, 0)), 0),
 		0,
-		COUNT(*) FILTER (WHERE s.span_type = 'llm_call'),
+		COUNT(*) FILTER (WHERE s.span_type = 'llm_call' AND CAST(COALESCE(NULLIF(s.metadata->'provider_run'->>'nested_llm_calls', ''), '0') AS INTEGER) = 0),
 		0,
 		0,
 		0
