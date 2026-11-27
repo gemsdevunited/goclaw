@@ -176,6 +176,9 @@ func (p *ClaudeCLIProvider) ChatStream(ctx context.Context, req ChatRequest, onC
 		var finalResp ChatResponse
 		var contentBuf strings.Builder
 		var streamErrMsg string // error message from stream-json result event
+		// Trace-only: child spans for each CLI turn / tool call. Never changes the response.
+		tracker := newCLITraceTracker(NestedTraceObserverFromContext(ctx), nil)
+		var resultEv *cliStreamEvent
 
 		for scanner.Scan() {
 			if ctx.Err() != nil {
@@ -202,6 +205,7 @@ func (p *ClaudeCLIProvider) ChatStream(ctx context.Context, req ChatRequest, onC
 				if ev.Message == nil {
 					continue
 				}
+				tracker.onAssistant(ev.Message, ev.ParentToolUseID)
 				text, thinking := extractStreamContent(ev.Message)
 				if text != "" {
 					contentBuf.WriteString(text)
@@ -211,7 +215,11 @@ func (p *ClaudeCLIProvider) ChatStream(ctx context.Context, req ChatRequest, onC
 					onChunk(StreamChunk{Thinking: thinking})
 				}
 
+			case "user":
+				tracker.onUser(ev.Message, ev.ParentToolUseID)
+
 			case "result":
+				resultEv = &ev
 				if ev.Result != "" {
 					finalResp.Content = ev.Result
 				} else {
@@ -240,10 +248,12 @@ func (p *ClaudeCLIProvider) ChatStream(ctx context.Context, req ChatRequest, onC
 		// Context cancelled (abort): best-effort reap (bounded by WaitDelay), then return.
 		if ctx.Err() != nil {
 			_ = cmd.Wait()
+			tracker.abort(ctx.Err().Error())
 			return nil, ctx.Err()
 		}
 
 		if err := scanner.Err(); err != nil {
+			tracker.abort("stream read error: " + err.Error())
 			return nil, fmt.Errorf("claude-cli: stream read error: %w", err)
 		}
 
@@ -253,8 +263,10 @@ func (p *ClaudeCLIProvider) ChatStream(ctx context.Context, req ChatRequest, onC
 			}
 			// If we got partial content, return it with the error.
 			if finalResp.Content != "" {
+				finalResp.ProviderTrace = tracker.finish(resultEv)
 				return &finalResp, nil
 			}
+			tracker.abort("claude-cli: " + err.Error())
 			stderrStr := strings.TrimSpace(stderrBuf.String())
 			if tool, retry := p.noteInvalidDisallowedTool(stderrStr); retry {
 				slog.Warn("claude-cli: retrying without unsupported --disallowedTools rule", "tool", tool)
@@ -286,6 +298,7 @@ func (p *ClaudeCLIProvider) ChatStream(ctx context.Context, req ChatRequest, onC
 			finalResp.FinishReason = "stop"
 		}
 
+		finalResp.ProviderTrace = tracker.finish(resultEv)
 		onChunk(StreamChunk{Done: true})
 		return &finalResp, nil
 	}

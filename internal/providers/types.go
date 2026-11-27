@@ -105,6 +105,10 @@ type ChatResponse struct {
 	// Images holds generated images returned by image_generation_call tools (Codex).
 	// Not persisted to DB; populated at runtime from provider response.
 	Images []ImageContent `json:"-"`
+
+	// ProviderTrace carries trace-only totals from providers that run their
+	// own agent loop (Claude CLI). Nil for regular providers.
+	ProviderTrace *ProviderTrace `json:"-"`
 }
 
 // StreamChunk is a piece of a streaming response.

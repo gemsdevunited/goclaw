@@ -52,6 +52,7 @@ func parseJSONArray(data []byte) *ChatResponse {
 	var resultText string
 	var assistantText strings.Builder
 	var usage *Usage
+	var trace *ProviderTrace
 	finishReason := "stop"
 
 	for _, raw := range events {
@@ -61,6 +62,11 @@ func parseJSONArray(data []byte) *ChatResponse {
 			Result  string          `json:"result,omitempty"`
 			Message json.RawMessage `json:"message,omitempty"`
 			Usage   *cliUsage       `json:"usage,omitempty"`
+
+			CostUSD       float64 `json:"cost_usd,omitempty"`
+			TotalCostUSD  float64 `json:"total_cost_usd,omitempty"`
+			NumTurns      int     `json:"num_turns,omitempty"`
+			DurationAPIMS int     `json:"duration_api_ms,omitempty"`
 		}
 		if err := json.Unmarshal(raw, &ev); err != nil {
 			continue
@@ -78,6 +84,12 @@ func parseJSONArray(data []byte) *ChatResponse {
 					CompletionTokens: ev.Usage.OutputTokens,
 					TotalTokens:      ev.Usage.InputTokens + ev.Usage.OutputTokens,
 				}
+			}
+			trace = &ProviderTrace{
+				TotalUsage:    ev.Usage.toTraceUsage(),
+				CostUSD:       cliCostUSD(ev.TotalCostUSD, ev.CostUSD),
+				NumTurns:      ev.NumTurns,
+				DurationAPIMS: ev.DurationAPIMS,
 			}
 
 		case "assistant":
@@ -105,9 +117,10 @@ func parseJSONArray(data []byte) *ChatResponse {
 	}
 
 	return &ChatResponse{
-		Content:      content,
-		FinishReason: finishReason,
-		Usage:        usage,
+		Content:       content,
+		FinishReason:  finishReason,
+		Usage:         usage,
+		ProviderTrace: trace,
 	}
 }
 
@@ -133,6 +146,12 @@ func parseSingleJSONResult(line []byte) *ChatResponse {
 			CompletionTokens: resp.Usage.OutputTokens,
 			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
 		}
+	}
+	cr.ProviderTrace = &ProviderTrace{
+		TotalUsage:    resp.Usage.toTraceUsage(),
+		CostUSD:       cliCostUSD(resp.TotalCostUSD, resp.CostUSD),
+		NumTurns:      resp.NumTurns,
+		DurationAPIMS: resp.DurationAPIMS,
 	}
 	return cr
 }
