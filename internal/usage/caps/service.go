@@ -41,6 +41,8 @@ type Request struct {
 	ReservationKey  string
 	Messages        []providers.Message
 	MaxOutputTokens int
+	IsDecision      bool
+	InputText       string
 }
 
 type Reservation struct {
@@ -89,12 +91,19 @@ func (s *Service) Preflight(ctx context.Context, req Request) (*Reservation, err
 	if len(policies) == 0 {
 		return skippedScopedReservation(req, scope, "no_policy"), nil
 	}
+	var inputTokens int
+	if req.IsDecision {
+		inputTokens = EstimateInputTokens([]providers.Message{{Role: "user", Content: req.InputText}})
+	} else {
+		inputTokens = EstimateInputTokens(req.Messages)
+	}
+
 	usage := pricing.BillableUsage{
-		InputTokens:  int64(EstimateInputTokens(req.Messages)),
+		InputTokens:  int64(inputTokens),
 		OutputTokens: int64(req.MaxOutputTokens),
 		ImageCount:   int64(CountImages(req.Messages)),
 	}
-	if usage.OutputTokens <= 0 {
+	if !req.IsDecision && usage.OutputTokens <= 0 {
 		usage.OutputTokens = 1
 	}
 	key := req.ReservationKey
@@ -181,6 +190,62 @@ func (r *Reservation) Reconcile(ctx context.Context, resp *providers.ChatRespons
 
 func (r *Reservation) ReconcileStream(ctx context.Context, resp *providers.ChatResponse, callErr error, streamed bool) {
 	r.reconcile(ctx, resp, callErr, streamed)
+}
+
+// ReconcileDecision reconciles a completed decision model evaluation.
+// Unlike generative Chat LLMs, decision models legitimately produce 0 completion tokens,
+// so actual.OutputTokens=0 is preserved and not replaced with estimated output tokens.
+func (r *Reservation) ReconcileDecision(ctx context.Context, resp *providers.DecisionResponse, callErr error) {
+	if r == nil || r.svc == nil || r.key == "" || r.skipped || r.result == nil || len(r.result.Policies) == 0 {
+		return
+	}
+	actual := r.usage
+	if resp != nil && resp.Usage != nil {
+		actual = pricing.FromProviderUsage(resp.Usage)
+		if r.prices.Request == nil {
+			actual.RequestCount = 0
+		}
+		if actual.RequestCount == 0 && r.usage.RequestCount > 0 {
+			actual.RequestCount = r.usage.RequestCount
+		}
+		if actual.ImageCount == 0 {
+			actual.ImageCount = r.usage.ImageCount
+		}
+		// For decision models, 0 output tokens is valid and expected.
+		// Do not fall back to r.usage.OutputTokens.
+		if actual.InputTokens == 0 {
+			actual.InputTokens = r.usage.InputTokens
+		}
+	}
+	status := "reconciled"
+	if callErr != nil {
+		status = "failed"
+		if resp == nil || resp.Usage == nil {
+			// If upstream call timed out or failed with network timeout after possibly being processed,
+			// preserve request/input charge instead of treating it as completely free.
+			if errors.Is(callErr, context.DeadlineExceeded) || strings.Contains(strings.ToLower(callErr.Error()), "timeout") {
+				status = "uncertain_timeout"
+				actual.OutputTokens = 0
+			} else {
+				actual = pricing.BillableUsage{}
+			}
+		}
+	}
+	cost, err := pricing.CostMicros(r.prices, actual)
+	if err != nil {
+		cost = r.estimatedCostMicros
+	}
+	r.actualTokens = actual.TotalTokens()
+	r.actualCostMicros = cost
+	r.reconcileStatus = status
+	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := r.svc.store.ReconcileUsage(reconcileCtx, store.UsageReconcileRequest{
+		ReservationKey: r.key, ActualTokens: actual.TotalTokens(),
+		ActualCostMicros: cost, Status: status,
+	}); err != nil {
+		slog.Warn("usage_caps.reconcile_failed", "reservation_key", r.key, "error", err)
+	}
 }
 
 func (r *Reservation) reconcile(ctx context.Context, resp *providers.ChatResponse, callErr error, keepEstimateOnError bool) {
